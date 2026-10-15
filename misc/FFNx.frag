@@ -116,6 +116,13 @@ vec3 FF8Atmosphere(vec3 ray)
 
 void main()
 {
+    if (WMFlags.z > 2.5)   // FF8 cloud shells (docs/space.md "Clouds"): the map turned east by the drift
+    {
+        float density = texture2D(tex_0, vec2(fract(v_texcoord0.x - WMFlags.w), v_texcoord0.y)).a;
+        float fade = ff8Globe[1].z > 7.5 ? 1.0 : ff8Globe[5].x;
+        gl_FragColor = vec4(0.96, 0.97, 1.0, density * fade);
+        return;
+    }
     if (WMFlags.z > 1.5)   // FF8 atmosphere shell: display colour, added over FF8's (black) space sky
     {
         gl_FragColor = vec4(FF8Atmosphere(normalize(v_position0.xyz)) * ff8Globe[5].x, 1.0);
@@ -217,5 +224,12 @@ void main()
         color.rgb *= gameGlobalLightColor.w * lightAmbient;
     }
     
+    // FF8's world mesh: cloud shadows (docs/space.md "Clouds"); v_normal0.xy is the vertex's map UV.
+    if (WMFlags.z > 0.5 && WMFlags.z < 1.5 && ff8Globe[5].x > 0.0)
+    {
+        float shadow = texture2D(tex_1, vec2(fract(v_normal0.x - WMFlags.w), v_normal0.y)).a;
+        color.rgb *= 1.0 - 0.25 * shadow * ff8Globe[5].x;
+    }
+
     gl_FragColor = color;
 }

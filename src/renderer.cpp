@@ -146,8 +146,8 @@ void Renderer::setCommonUniforms()
     internalState.WMFlags = {
         (float)internalState.sphericalWorldRate,
         (float)internalState.bIsFogEnabled,
-        (float)internalState.bIsFF8WorldMesh + (float)internalState.bIsFF8Atmosphere,
-        NULL
+        internalState.ff8WorldMeshMode,
+        internalState.ff8CloudDrift
     };
     if (uniform_log) ffnx_trace("%s: WMFlags XYZW(sphericalWorldRate %f, bIsFogEnabled %f, NULL, NULL)\n", __func__, internalState.WMFlags[0], internalState.WMFlags[1]);
 
@@ -2573,10 +2573,10 @@ void Renderer::setD3DProjectionRaw(struct matrix* matrix)
     ::memcpy(internalState.d3dProjectionMatrix, &matrix->m[0][0], sizeof(matrix->m));
 }
 
-void Renderer::setFF8WorldMesh(bool flag, const float* globe, bool atmosphere)
+void Renderer::setFF8WorldMesh(bool flag, const float* globe, float fragmentMode, float cloudDrift)
 {
-    internalState.bIsFF8WorldMesh = flag;
-    internalState.bIsFF8Atmosphere = flag && atmosphere;
+    internalState.ff8WorldMeshMode = flag ? fragmentMode : 0.0f;
+    internalState.ff8CloudDrift = cloudDrift;
     if (globe) ::memcpy(internalState.ff8Globe, globe, sizeof(internalState.ff8Globe));
 }
 

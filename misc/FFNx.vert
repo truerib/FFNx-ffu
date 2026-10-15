@@ -51,12 +51,13 @@ uniform vec4 WMFlags;
 // Final Fantasy Universe: FF8's whole world map as a 3D mesh (src/ff8/world/renderer.cpp)
 //  [0] anchor x, anchor z (camera-relative), camera height C.y, virtual altitude
 //  [1] virtual scale, planet radius, mode (0 flat, 1 globe, 2 FF8's own bend, 4 other planet,
-//      5 airship: worldView places the model in the camera-relative frame, 6 atmosphere shell),
-//      polar-cap draw (1)
+//      5 airship: worldView places the model in the camera-relative frame, 6 atmosphere shell,
+//      7 cloud shell, 8 another planet's cloud shell), polar-cap draw (1)
 //  [2] globe: east axis | bend: depth row R3 (xyz) + curve start (w)
 //  [3] globe: up axis   | flat/bend: camera position in mesh space (xyz)
 //  [4] globe: north axis
 //  [5] other planet: its centre minus FF8's (solar frame, planet radii, docs/space.md), game units per radius
+//      world mesh / cloud shell: x = cloud fade, w = shell height (game units)
 uniform vec4 ff8Globe[6];
 
 #define isTLVertex VSFlags.x > 0.0
@@ -84,6 +85,14 @@ vec3 FF8PlanetUnit(vec3 g)
     float lon = m.x / FF8_PLANET_RADIUS;
     float lat = 2.0 * atan(exp((0.5 * FF8_MAP.y - m.y) / FF8_PLANET_RADIUS)) - 1.5707963;
     return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+}
+
+// The vertex's place in the planet textures' equirectangular layout (cloud shadows, docs/space.md "Clouds").
+vec2 FF8PlanetUV(vec3 unitP)
+{
+    float lon = atan2(unitP.x, unitP.z);
+    if (lon < 0.0) lon += 6.2831853;
+    return vec2(lon / 6.2831853, 0.5 - asin(clamp(unitP.y, -1.0, 1.0)) / 3.1415927);
 }
 
 // Same as mods/ff8-autoboot/globe_ff8.c globe_point() + to_virtual(): the camera-relative point FF8
@@ -175,15 +184,23 @@ void main()
         
         v_position0 = mul(worldView, vec4(pos.xyz, 1.0));
 
+        vec2 FF8MeshCloudUV = vec2_splat(0.0);
         if (isFF8WorldMesh)
         {
             vec3 p;
-            if (ff8Globe[1].z > 5.5) p = FF8GlobePoint(normalize(pos.xyz), ff8Globe[5].w);   // atmosphere shell
+            if (ff8Globe[1].z > 7.5) p = FF8OtherPlanetPoint(normalize(pos.xyz) * 1.02);   // their clouds, 0.02 R up
+            else if (ff8Globe[1].z > 6.5) p = FF8GlobePoint(normalize(pos.xyz), ff8Globe[5].w);   // our cloud shell
+            else if (ff8Globe[1].z > 5.5) p = FF8GlobePoint(normalize(pos.xyz), ff8Globe[5].w);   // atmosphere shell
             else if (ff8Globe[1].z > 4.5) p = v_position0.xyz * ff8Globe[1].x;   // airship: climbs with the camera
             else if (ff8Globe[1].z > 3.5) p = FF8OtherPlanetPoint(normalize(pos.xyz));
             else if (ff8Globe[1].w > 0.5) p = FF8GlobePoint(normalize(pos.xyz), 0.0);   // polar cap: unit vectors
             else if (ff8Globe[1].z > 1.5) p = FF8Bend(FF8CameraRelative(pos.xyz));
-            else if (ff8Globe[1].z > 0.5) p = FF8GlobePoint(FF8PlanetUnit(pos.xyz), -pos.y);
+            else if (ff8Globe[1].z > 0.5)
+            {
+                vec3 unitP = FF8PlanetUnit(pos.xyz);
+                p = FF8GlobePoint(unitP, -pos.y);
+                FF8MeshCloudUV = FF8PlanetUV(unitP);
+            }
             else p = FF8CameraRelative(pos.xyz);
             v_position0 = vec4(p, 1.0);
             pos = mul(mul(d3dViewport, d3dProjection), vec4(p, 1.0));   // FF8's rotation and lens; w = view z
@@ -199,6 +216,7 @@ void main()
             pos = mul(mul(d3dViewport, d3dProjection), vec4(pos.xyz, 1.0));
         }
         v_normal0 = mul(normalMatrix, vec4(a_normal, 0.0)).xyz;
+        if (isFF8WorldMesh) v_normal0 = vec3(FF8MeshCloudUV, 0.0);   // FF8 has no lighting: carries the cloud map UV
 
         // In this default shader, lighting is applied in gamma space so that it does better match the original lighting
         if (gameLightingMode == GAME_LIGHTING_PER_VERTEX)

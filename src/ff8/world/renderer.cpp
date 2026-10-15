@@ -231,6 +231,7 @@ namespace ffu::ff8world
         buildPolarCaps();
         buildUnitSphere();
         loadOtherPlanets();
+        loadClouds();
         loaded = !mesh.shapes.empty();
         ffnx_info("FF8 world mesh: %u shapes, %u vertices from %u files\n", (uint32_t)mesh.shapes.size(), vertexOffset, (uint32_t)files.size());
     }
@@ -400,6 +401,76 @@ namespace ffu::ff8world
         ffnx_info("FF8 world mesh: %u other planets loaded\n", (uint32_t)otherPlanets.size());
     }
 
+    // docs/space.md "Clouds": the map turns east one turn per 6 hours of real time, the same in every game.
+    float Renderer::cloudDrift() const
+    {
+        FILETIME now;
+        GetSystemTimeAsFileTime(&now);
+        const uint64_t ticks = (uint64_t(now.dwHighDateTime) << 32) | now.dwLowDateTime;   // 100 ns since 1601
+        const uint64_t unix_seconds = ticks / 10000000ull - 11644473600ull;
+        return float(unix_seconds % 21600ull) / 21600.0f;
+    }
+
+    // Faded in with the camera's height above the ground: smoothstep(0.25, 0.6, h), h in planet radii.
+    float Renderer::cloudFade() const
+    {
+        if (!cam.hasGlobe || cam.globe.radius <= 0.0f) return 0.0f;
+        const float h = (float(cam.c[1]) + cam.globe.altitude) / cam.globe.radius;
+        float t = (h - 0.25f) / (0.6f - 0.25f);
+        t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    void Renderer::loadClouds()
+    {
+        auto load = [](const char *id) {
+            char path[MAX_PATH];
+            _snprintf(path, sizeof(path), "%s/%s/planets/%s_clouds.dds", basedir, external_mesh_path.c_str(), id);
+            uint32_t width = 0, height = 0, mips = 0;
+            auto texture = newRenderer.createTextureHandle(path, &width, &height, &mips);
+            if (!texture.idx) { ffnx_info("FF8 world mesh: no %s, no clouds there\n", path); return bgfx::TextureHandle(BGFX_INVALID_HANDLE); }
+            return texture;
+        };
+        ownClouds = load("ff8");
+        for (auto &planet : otherPlanets) planet.clouds = load(planet.id);
+    }
+
+    // Our cloud shell, 0.02 R above sea level, alpha-blended over everything drawn so far.
+    void Renderer::drawCloudShell()
+    {
+        const float fade = cloudFade();
+        if (fade <= 0.0f || !bgfx::isValid(ownClouds) || sphere.shapes.empty()) return;
+        const Shape &shape = sphere.shapes[0];
+        struct matrix identity, projection;
+        identity_matrix(&identity);
+        buildProjection(projection);
+        newRenderer.setInterpolationQualifier(SMOOTH);
+        newRenderer.setPrimitiveType();
+        newRenderer.isTLVertex(false);
+        newRenderer.isTexture(true);
+        newRenderer.isExternalTexture(true);
+        newRenderer.doTextureFiltering(true);
+        newRenderer.setBlendMode(RendererBlendMode::BLEND_AVG);
+        newRenderer.doDepthTest(true);
+        newRenderer.doDepthWrite(false);
+        newRenderer.setD3DViweport(&identity);
+        newRenderer.setD3DProjectionRaw(&projection);
+        newRenderer.setWorldViewMatrix(&identity, false);
+        float globe[24];
+        fillGlobeUniform(globe, Part::World);
+        globe[6] = 7.0f;
+        globe[20] = fade;
+        globe[23] = 0.02f * cam.globe.radius;
+        newRenderer.setFF8WorldMesh(true, globe, 3.0f, cloudDrift());
+        newRenderer.setCommonUniforms();
+        newRenderer.setCullMode(RendererCullMode::DISABLED);
+        sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+        sphere.bindField3dIndexBuffer(0, shape.indices.size());
+        newRenderer.useTexture(ownClouds.idx, RendererTextureSlot::TEX_Y);
+        newRenderer.bindTextures();
+        newRenderer.draw(true, true, true);
+    }
+
     // A unit sphere with equirectangular UVs: the other planets and the atmosphere shell.
     void Renderer::buildUnitSphere()
     {
@@ -451,6 +522,7 @@ namespace ffu::ff8world
         newRenderer.isFBTexture(false);
         newRenderer.doModulateAlpha(true);
         drawTranslucentTerrain();
+        if (cam.hasGlobe) drawCloudShell();
         if (cam.hasGlobe && !sphere.shapes.empty() && cam.globe.space > 0.0f) drawAtmosphere();
         newRenderer.discardAllBindings();
         newRenderer.setFF8WorldMesh(false);
@@ -537,6 +609,21 @@ namespace ffu::ff8world
             newRenderer.useTexture(planet.texture.idx, RendererTextureSlot::TEX_Y);
             newRenderer.bindTextures();
             newRenderer.draw(true, true, true);
+            if (bgfx::isValid(planet.clouds))
+            {
+                globe[6] = 8.0f;
+                newRenderer.setFF8WorldMesh(true, globe, 3.0f, cloudDrift());
+                newRenderer.setBlendMode(RendererBlendMode::BLEND_AVG);
+                newRenderer.doDepthWrite(false);
+                newRenderer.setCommonUniforms();
+                sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+                sphere.bindField3dIndexBuffer(0, shape.indices.size());
+                newRenderer.useTexture(planet.clouds.idx, RendererTextureSlot::TEX_Y);
+                newRenderer.bindTextures();
+                newRenderer.draw(true, true, true);
+                newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
+                newRenderer.doDepthWrite(true);
+            }
         }
     }
 
@@ -723,10 +810,14 @@ namespace ffu::ff8world
         animateTextures();
         float globe[24];
         fillGlobeUniform(globe, Part::World);
-        newRenderer.setFF8WorldMesh(true, globe);
+        const bool shadows = bgfx::isValid(ownClouds) && cloudFade() > 0.0f;
+        globe[20] = shadows ? cloudFade() : 0.0f;   // cloud shadows on the terrain (FFNx.frag)
+        newRenderer.setFF8WorldMesh(true, globe, 1.0f, cloudDrift());
         newRenderer.isTexture(true);
         newRenderer.setCommonUniforms();
+        if (shadows) newRenderer.useTexture(ownClouds.idx, RendererTextureSlot::TEX_U);
         drawShapes(false);
+        if (shadows) newRenderer.useTexture(0, RendererTextureSlot::TEX_U);
 
 
         if (cam.hasGlobe && !caps.shapes.empty())

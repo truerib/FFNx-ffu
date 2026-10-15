@@ -99,6 +99,10 @@ namespace ffu::ff8world
         void buildPolarCaps();
         void loadOtherPlanets();
         void buildUnitSphere();
+        void loadClouds();
+        void drawCloudShell();
+        float cloudDrift() const;
+        float cloudFade() const;
         void drawOtherPlanets();
         void drawAirships();
         ExternalMesh* airshipMesh(const char* id);
@@ -109,8 +113,9 @@ namespace ffu::ff8world
 
         ExternalMesh mesh;
         ExternalMesh caps;
-        ExternalMesh sphere;    // unit sphere with equirectangular UVs, for the other planets
-        struct OtherPlanet { const char* id; float offset[3]; bgfx::TextureHandle texture = BGFX_INVALID_HANDLE; };
+        ExternalMesh sphere;
+        bgfx::TextureHandle ownClouds = BGFX_INVALID_HANDLE;    // unit sphere with equirectangular UVs, for the other planets
+        struct OtherPlanet { const char* id; float offset[3]; bgfx::TextureHandle texture = BGFX_INVALID_HANDLE; bgfx::TextureHandle clouds = BGFX_INVALID_HANDLE; };
         std::vector<OtherPlanet> otherPlanets;
         std::vector<MeshPart> parts;
         std::vector<ShapeOffset> shapeOffsets;
