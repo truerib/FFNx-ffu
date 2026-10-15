@@ -91,8 +91,8 @@ namespace ffu::ff8world
 
         void hook_terrain()       { renderer.snapshot(); ((plain_fn)orig_terrain)(); }
         void hook_terrain_nofog() { renderer.snapshot(); ((plain_fn)orig_terrain_nofog)(); }
-        void hook_draw_ot(int *ot)         { renderer.draw(); ((draw_ot_fn)orig_draw_ot)(ot); }
-        void hook_draw_ot_paused(int *ot)  { renderer.draw(); ((draw_ot_fn)orig_draw_ot_paused)(ot); }
+        void hook_draw_ot(int *ot)         { renderer.draw(); ((draw_ot_fn)orig_draw_ot)(ot); renderer.afterDrawOT(); }
+        void hook_draw_ot_paused(int *ot)  { renderer.draw(); ((draw_ot_fn)orig_draw_ot_paused)(ot); renderer.afterDrawOT(); }
         void hook_enter()          { ((plain_fn)orig_enter)(); renderer.load(); }
         void hook_exit(int a1)     { renderer.onExit(); ((exit_fn)orig_exit)(a1); }
 
@@ -223,6 +223,7 @@ namespace ffu::ff8world
         }
 
         buildPolarCaps();
+        buildUnitSphere();
         loadOtherPlanets();
         loaded = !mesh.shapes.empty();
         ffnx_info("FF8 world mesh: %u shapes, %u vertices from %u files\n", (uint32_t)mesh.shapes.size(), vertexOffset, (uint32_t)files.size());
@@ -384,8 +385,14 @@ namespace ffu::ff8world
             if (!texture.idx) { ffnx_info("FF8 world mesh: no %s, that planet is not drawn\n", path); continue; }
             otherPlanets.push_back({ planet.id, { planet.x - self[0], planet.y - self[1], planet.z - self[2] }, texture });
         }
-        if (otherPlanets.empty()) return;
+        buildUnitSphere();
+        ffnx_info("FF8 world mesh: %u other planets loaded\n", (uint32_t)otherPlanets.size());
+    }
 
+    // A unit sphere with equirectangular UVs: the other planets and the atmosphere shell.
+    void Renderer::buildUnitSphere()
+    {
+        if (!sphere.shapes.empty()) return;
         constexpr int RINGS = 64, SECTORS = 128;
         Shape shape;
         for (int ring = 0; ring <= RINGS; ++ring)
@@ -418,7 +425,48 @@ namespace ffu::ff8world
         sphere.fillExternalMeshIndexBuffer(shape.indices.data(), shape.indices.size());
         sphere.shapes.push_back(std::move(shape));
         sphere.updateExternalMeshBuffers();
-        ffnx_info("FF8 world mesh: %u other planets loaded\n", (uint32_t)otherPlanets.size());
+    }
+
+    // docs/space.md "## Atmosphere": an additive shell 0.6 R above the ground, drawn after FF8's own
+    // primitives at just-in-front-of-the-sky depth, so it only shows where the planet doesn't. Its colour
+    // is computed per pixel in FFNx.frag (FF8Atmosphere) and faded in as FF8's own 2D sky fades out.
+    void Renderer::afterDrawOT()
+    {
+        if (!replacesTerrain() || !cam.valid || !cam.hasGlobe || sphere.shapes.empty() || cam.globe.space <= 0.0f) return;
+        if (*(const uint32_t *)FRAME_DRAWN == 0) return;
+        const Shape &shape = sphere.shapes[0];
+        struct matrix identity, projection;
+        identity_matrix(&identity);
+        buildProjection(projection);
+        newRenderer.setInterpolationQualifier(SMOOTH);
+        newRenderer.setPrimitiveType();
+        newRenderer.isTLVertex(false);
+        newRenderer.isTexture(false);
+        newRenderer.isExternalTexture(false);
+        newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
+        newRenderer.doDepthTest(true);
+        newRenderer.doDepthWrite(false);
+        newRenderer.doScissorTest(false);
+        newRenderer.setSphericalWorldRate(0.0f);
+        newRenderer.setFogEnabled(false);
+        newRenderer.setD3DViweport(&identity);
+        newRenderer.setD3DProjectionRaw(&projection);
+        newRenderer.setWorldViewMatrix(&identity, false);
+        float globe[24];
+        fillGlobeUniform(globe, Part::World);
+        globe[6] = 6.0f;
+        globe[20] = cam.globe.space;              // fade
+        globe[23] = 0.6f * cam.globe.radius;      // shell height above the ground
+        newRenderer.setFF8WorldMesh(true, globe, true);
+        newRenderer.setCommonUniforms();
+        newRenderer.setCullMode(RendererCullMode::FRONT);   // the far side of the shell only: no double glow
+        sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+        sphere.bindField3dIndexBuffer(0, shape.indices.size());
+        newRenderer.draw(true, true, true);
+        newRenderer.discardAllBindings();
+        newRenderer.setFF8WorldMesh(false);
+        newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
+        newRenderer.doDepthWrite(true);
     }
 
     void Renderer::drawOtherPlanets()

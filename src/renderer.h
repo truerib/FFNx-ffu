@@ -323,6 +323,7 @@ private:
         std::vector<float> WMFlags;
         float ff8Globe[24] = {};
         bool bIsFF8WorldMesh = false;
+        bool bIsFF8Atmosphere = false;
         std::vector<float> FSMovieFlags;
         std::vector<float> SmoothSkinningFlags;
         std::vector<float> FSMoreMovieFlags;
@@ -593,7 +594,7 @@ public:
     void setD3DViweport(struct matrix* matrix);
     void setD3DProjection(struct matrix* matrix);
     void setD3DProjectionRaw(struct matrix* matrix);   // as given: no widescreen or view-distance rewrite
-    void setFF8WorldMesh(bool flag, const float* globe = nullptr);   // WMFlags.z + the ff8Globe uniform
+    void setFF8WorldMesh(bool flag, const float* globe = nullptr, bool atmosphere = false);   // WMFlags.z (1 mesh, 2 atmosphere) + ff8Globe
 
     // Internal coord calculation
     uint16_t getInternalCoordX(uint16_t inX);

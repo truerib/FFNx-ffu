@@ -40,6 +40,7 @@ uniform vec4 FSMiscFlags;
 uniform vec4 FSHDRFlags;
 uniform vec4 FSTexFlags;
 uniform vec4 WMFlags;
+uniform vec4 ff8Globe[6];   // Final Fantasy Universe: FF8 world-mesh globe state (FFNx.vert)
 uniform vec4 TimeColor;
 uniform vec4 TimeData;
 uniform vec4 gameLightingFlags;
@@ -84,8 +85,43 @@ uniform vec4 gameScriptedLightColor;
 
 #define isFogEnabled WMFlags.y > 0.0
 
+// Final Fantasy Universe: the shared atmosphere (docs/space.md "## Atmosphere"), seen from FF8's camera.
+// ray: view direction in FF8's camera-relative frame; the planet's centre and the camera's height come from
+// the globe state (FFNx.vert FF8GlobePoint's frame, climbed and scaled the same way).
+vec3 FF8Atmosphere(vec3 ray)
+{
+    float scale = ff8Globe[1].x;
+    float radius = ff8Globe[1].y * scale;
+    vec3 centre = vec3(ff8Globe[0].x, ff8Globe[0].z + ff8Globe[1].y + ff8Globe[0].w, ff8Globe[0].y) * scale;
+    float d = length(centre) / radius;
+    float h = max(d - 1.0, 0.0);
+    vec3 up = -normalize(centre);
+    float cosChi = dot(ray, up);
+    float H = mix(0.127830, 0.025566, smoothstep(0.63916, 3.19579, h));
+    float x = (1.0 + h) / H;
+    float c = sqrt(1.5707963 * x);
+    float above = exp(-h / H);
+    float tau;
+    if (cosChi >= 0.0) tau = H * above * c / ((c - 1.0) * cosChi + 1.0);
+    else
+    {
+        float sinChi = sqrt(saturate(1.0 - cosChi * cosChi));
+        tau = H * max(above * c / ((c - 1.0) * cosChi - 1.0)
+            + 2.0 * c * sqrt(sinChi) * exp(min((1.0 - (1.0 + h) * sinChi) / H, 80.0)), 0.0);
+    }
+    tau = min(tau, 2.13053);
+    vec3 beta = vec3(14.0810, 32.8557, 70.4051);
+    return (vec3_splat(1.0) - exp(-beta * tau)) * vec3(0.62, 0.80, 1.00);
+}
+
 void main()
 {
+    if (WMFlags.z > 1.5)   // FF8 atmosphere shell: display colour, added over FF8's (black) space sky
+    {
+        gl_FragColor = vec4(FF8Atmosphere(normalize(v_position0.xyz)) * ff8Globe[5].x, 1.0);
+        return;
+    }
+
     // v_color0 is used for solid 2D colors (e.g., textbox backgrounds), solid-color polygon faces (e.g., all original FF7 models), and colorizing textures
     vec4 color = v_color0;
     color.rgb = toLinear(color.rgb);

@@ -87,6 +87,7 @@ namespace ffu::ff8world
         void onExit();
         void snapshot();
         void draw();
+        void afterDrawOT();
         bool replacesTerrain() const { return loaded && !mesh.shapes.empty(); }
 
     private:
@@ -95,6 +96,7 @@ namespace ffu::ff8world
         void fillGlobeUniform(float out[24], Part part, const float* planetOffset = nullptr) const;
         void buildPolarCaps();
         void loadOtherPlanets();
+        void buildUnitSphere();
         void drawOtherPlanets();
         void drawAirships();
         ExternalMesh* airshipMesh(const char* id);
