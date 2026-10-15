@@ -16,8 +16,9 @@ env:
   _RELEASE_CONFIGURATION: Release
   _BUILD_BRANCH: "${{ github.ref }}"
   _CHANGELOG_VERSION: "0"
-  # VCPKG: Enable Binary Caching
-  VCPKG_BINARY_SOURCES: "clear;nuget,github,readwrite"   # fork: our own package feed, cached from any branch
+  # VCPKG: Enable Binary Caching. Fork: a plain folder kept by actions/cache. The NuGet feed upstream uses
+  # timed out on every push here ("Pushing took too long"), so every build recompiled ~3 h of dependencies.
+  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}\\vcpkg-binary-cache,readwrite"
   # GIT: Fix reporting from stderr to stdout
   GIT_REDIRECT_STDERR: 2>&1
 
@@ -41,12 +42,27 @@ jobs:
       with:
         submodules: recursive
         fetch-depth: 0
+    - name: Restore vcpkg binary cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg-binary-cache
+        key: vcpkg-files-${{ github.run_id }}
+        restore-keys: vcpkg-files-
+    - name: Create vcpkg binary cache folder
+      run: New-Item -ItemType Directory -Force -Path "${{ github.workspace }}/vcpkg-binary-cache" | Out-Null
+      shell: pwsh
     - name: Build
       run: ".github/workflows/build.ps1"
       shell: pwsh
       env:
         _BUILD_VERSION: "1.24.3.${{ github.run_number }}"
         GITHUB_PACKAGES_PAT: ${{ secrets.GITHUB_TOKEN }}
+    - name: Save vcpkg binary cache
+      if: always()
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ github.workspace }}/vcpkg-binary-cache
+        key: vcpkg-files-${{ github.run_id }}
     - name: Upload vcpkg build logs
       if: failure()
       uses: actions/upload-artifact@v4
