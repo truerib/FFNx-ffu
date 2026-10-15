@@ -100,6 +100,7 @@ namespace ffu::ff8world
         ExternalMesh* airshipMesh(const char* id);
         void drawShapes(bool translucent);
         bool partVisible(const MeshPart& part) const;
+        bool shapeVisible(const Shape& shape) const;
         void animateTextures();
 
         ExternalMesh mesh;

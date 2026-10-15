@@ -55,6 +55,7 @@ namespace ffu::ff8world
         constexpr uint32_t WORLD_STORY_FLAGS    = 0x2036BB6;   // u16: which story variant of each changed segment
         constexpr uint32_t WORLD_HEXFIELD_STAGE = 0x2036BD8;
 
+        constexpr float MAP_WIDTH = 262144.0f;
         constexpr float MAP_HEIGHT = 196608.0f;
         constexpr float PLANET_RADIUS = 41721.5f;
 
@@ -511,6 +512,37 @@ namespace ffu::ff8world
         return true;
     }
 
+    // Whether a shape can be seen this frame. Globe: its centre must lie on the camera's side of the
+    // planet, within the horizon (cos = R / (R + h)) widened by the shape's angular size and terrain height.
+    // FF8's own bend: within FF8's draw distance of the camera on the wrapping map.
+    bool Renderer::shapeVisible(const Shape &shape) const
+    {
+        const float cx = 0.5f * (shape.min.x + shape.max.x), cz = 0.5f * (shape.min.z + shape.max.z);
+        const float size = std::max(shape.max.x - shape.min.x, shape.max.z - shape.min.z);
+        if (!cam.hasGlobe)
+        {
+            const float cameraX = float(cam.refBlockX) * 2048.0f - float(cam.c[0]);
+            const float cameraZ = -float(cam.refBlockZ) * 2048.0f - float(cam.c[2]);
+            float dx = std::fmod(std::fabs(cx - cameraX), MAP_WIDTH), dz = std::fmod(std::fabs(cz - cameraZ), MAP_HEIGHT);
+            dx = std::min(dx, MAP_WIDTH - dx);
+            dz = std::min(dz, MAP_HEIGHT - dz);
+            return dx * dx + dz * dz < (60000.0f + size) * (60000.0f + size);
+        }
+        float mx = std::fmod(cx, MAP_WIDTH), mz = std::fmod(-cz, MAP_HEIGHT);
+        if (mx < 0.0f) mx += MAP_WIDTH;
+        if (mz < 0.0f) mz += MAP_HEIGHT;
+        const float lon = mx / PLANET_RADIUS;
+        const float lat = 2.0f * std::atan(std::exp((0.5f * MAP_HEIGHT - mz) / PLANET_RADIUS)) - 1.5707963f;
+        const float unit[3] = { std::cos(lat) * std::sin(lon), std::sin(lat), std::cos(lat) * std::cos(lon) };
+        const float *up = cam.globe.up;
+        const float facing = unit[0] * up[0] + unit[1] * up[1] + unit[2] * up[2];
+        const float height = float(cam.c[1]) + cam.globe.altitude;
+        const float horizon = std::acos(std::min(1.0f, cam.globe.radius / (cam.globe.radius + std::max(height, 1.0f))));
+        // The camera trails the anchor by up to ~15,000 units; a shape spans up to its size; mountains add a little.
+        const float margin = (size * 0.75f + 15000.0f) / cam.globe.radius + 0.05f;
+        return facing > std::cos(std::min(horizon + margin, 3.1415f));
+    }
+
     // Semi-transparent terrain (FF8 code 0x36) is in materials named ffu_<kind>_semi__* (tools/ff8world).
     void Renderer::drawShapes(bool translucent)
     {
@@ -522,7 +554,7 @@ namespace ffu::ff8world
                 const Shape &shape = mesh.shapes[i];
                 const bool isTranslucent = shape.materialName.find("_semi__") != std::string::npos;
                 if (isTranslucent != translucent || shape.indices.empty() || shape.pMaterial == nullptr
-                    || shape.pMaterial->baseColorTexHandles.empty()) continue;
+                    || shape.pMaterial->baseColorTexHandles.empty() || !shapeVisible(shape)) continue;
                 auto texture = shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex];
                 if (!bgfx::isValid(texture)) continue;
                 newRenderer.setCullMode(RendererCullMode::DISABLED);
