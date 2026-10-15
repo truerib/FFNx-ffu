@@ -21,6 +21,7 @@
 //    GNU General Public License for more details.                          //
 /****************************************************************************/
 
+#include <algorithm>
 #include "external_mesh.h"
 
 #include "cfg.h"
@@ -169,6 +170,7 @@ bool ExternalMesh::importExternalMeshGltfFile(char* file_path, char* tex_path, b
 			float* normalBuffer = nullptr;
 			float* uvBuffer = nullptr;
 			float* colorBuffer = nullptr;
+			int colorComponents = 0;
             byte* jointsBuffer = nullptr;
             float * weightsBuffer = nullptr;
 			for (size_t k = 0; k < primitive.attributes_count; k++)
@@ -196,7 +198,12 @@ bool ExternalMesh::importExternalMeshGltfFile(char* file_path, char* tex_path, b
 				}
 				else if(strcmp(attr.name, "COLOR_0") == 0)
 				{
-					colorBuffer = (float*)((char*)attr.data->buffer_view->buffer->data + attr.data->buffer_view->offset);
+					// Only float colours are used (Final Fantasy Universe: FF8's per-polygon shading)
+					if (attr.data->component_type == cgltf_component_type_r_32f)
+					{
+						colorBuffer = (float*)((char*)attr.data->buffer_view->buffer->data + attr.data->buffer_view->offset);
+						colorComponents = attr.data->type == cgltf_type_vec4 ? 4 : 3;
+					}
 				}
                 else if(strcmp(attr.name, "JOINTS_0") == 0)
 				{
@@ -209,6 +216,7 @@ bool ExternalMesh::importExternalMeshGltfFile(char* file_path, char* tex_path, b
 			}
 
             outShape.isDoubleSided = primitive.material->double_sided;
+            if (primitive.material->name) outShape.materialName = primitive.material->name;
 
 			auto texture = primitive.material->pbr_metallic_roughness.base_color_texture.texture;
 			if(texture != nullptr)
@@ -237,6 +245,14 @@ bool ExternalMesh::importExternalMeshGltfFile(char* file_path, char* tex_path, b
 				vertex.color.g = static_cast<char>(baseColorFactor[1] * 255);
 				vertex.color.b = static_cast<char>(baseColorFactor[2] * 255);
 				vertex.color.a = static_cast<char>(baseColorFactor[3] * 255);
+				if (colorBuffer != nullptr)
+				{
+					const float* c = colorBuffer + colorComponents * vertexIndex;
+					vertex.color.r = static_cast<char>(std::clamp(baseColorFactor[0] * c[0], 0.0f, 1.0f) * 255);
+					vertex.color.g = static_cast<char>(std::clamp(baseColorFactor[1] * c[1], 0.0f, 1.0f) * 255);
+					vertex.color.b = static_cast<char>(std::clamp(baseColorFactor[2] * c[2], 0.0f, 1.0f) * 255);
+					if (colorComponents == 4) vertex.color.a = static_cast<char>(std::clamp(baseColorFactor[3] * c[3], 0.0f, 1.0f) * 255);
+				}
 
                 if (uvBuffer != nullptr)
                 {

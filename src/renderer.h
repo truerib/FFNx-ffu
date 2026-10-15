@@ -144,6 +144,7 @@ enum RendererUniform
     LIGHT_INV_VIEW_PROJ_TEX_MATRIX,
     VIEW_OFFSET_MATRIX,
     INV_VIEW_OFFSET_MATRIX,
+    FF8_GLOBE,              // Final Fantasy Universe: FF8 world mesh globe state (vec4 x 5)
 
     BONE_MATRICES,
     SKINNING_FLAGS,
@@ -320,6 +321,8 @@ private:
         std::vector<float> FSHDRFlags;
         std::vector<float> FSTexFlags;
         std::vector<float> WMFlags;
+        float ff8Globe[20] = {};
+        bool bIsFF8WorldMesh = false;
         std::vector<float> FSMovieFlags;
         std::vector<float> SmoothSkinningFlags;
         std::vector<float> FSMoreMovieFlags;
@@ -589,6 +592,8 @@ public:
     float* getNormalMatrix();
     void setD3DViweport(struct matrix* matrix);
     void setD3DProjection(struct matrix* matrix);
+    void setD3DProjectionRaw(struct matrix* matrix);   // as given: no widescreen or view-distance rewrite
+    void setFF8WorldMesh(bool flag, const float* globe = nullptr);   // WMFlags.z + the ff8Globe uniform
 
     // Internal coord calculation
     uint16_t getInternalCoordX(uint16_t inX);

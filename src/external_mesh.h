@@ -49,6 +49,7 @@ struct Shape
     vector3<float> max;
     Material* pMaterial = nullptr;
     bool isDoubleSided = false;
+    std::string materialName;
 };
 
 struct Joint

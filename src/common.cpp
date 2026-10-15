@@ -80,6 +80,7 @@
 #include "ff8/vibration.h"
 #include "ff8/engine.h"
 #include "ff8/uv_patch.h"
+#include "ff8/world/renderer.h"
 #include "ff8/ambient.h"
 #include "ff8/file.h"
 #include "ff8/remaster.h"
@@ -1049,6 +1050,8 @@ int common_create_window(HINSTANCE hInstance, struct game_obj* game_object)
 				{
 					vram_init();
 					if (ff8_fix_uv_coords_precision) uv_patch_init();
+					// After uv_patch_init: the world mesh chains onto the UV fix's terrain wrappers.
+					if (ff8_world_external_mesh) ffu::ff8world::renderer.init();
 					vibration_init();
 					if (ff8_remastered_edition) {
 						ff8_remaster_init();

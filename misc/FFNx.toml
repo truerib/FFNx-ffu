@@ -149,6 +149,13 @@ enable_external_mesh = false
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~
 enable_worldmap_external_mesh = false
 
+#[FF8 WORLD MAP AS A 3D MESH]
+# FF8 only: draw the whole world map from <external_mesh_path>/ff8world/*.gltf as real 3D geometry
+# (every block, FF8's own camera, lens and depth) instead of FF8's ~11x11 software-projected blocks.
+# FF8 1.2 US (incl. Remastered) only. Final Fantasy Universe fork.
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ff8_world_external_mesh = false
+
 #[EXTERNAL MESH PATH]
 # Path for external mesh files.
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -48,6 +48,13 @@ uniform vec4 skinningFlags;
 
 uniform vec4 VSFlags;
 uniform vec4 WMFlags;
+// Final Fantasy Universe: FF8's whole world map as a 3D mesh (src/ff8/world/renderer.cpp)
+//  [0] anchor x, anchor z (camera-relative), camera height C.y, virtual altitude
+//  [1] virtual scale, planet radius, mode (0 flat, 1 globe, 2 FF8's own bend), polar-cap draw (1)
+//  [2] globe: east axis | bend: depth row R3 (xyz) + curve start (w)
+//  [3] globe: up axis   | flat/bend: camera position in mesh space (xyz)
+//  [4] globe: north axis
+uniform vec4 ff8Globe[5];
 
 #define isTLVertex VSFlags.x > 0.0
 #define blendMode VSFlags.y
@@ -59,6 +66,69 @@ uniform vec4 WMFlags;
 #define sphericaWorldRadiusScale  WMFlags.x
 
 #define gameLightingMode gameLightingFlags.x
+#define isFF8WorldMesh (WMFlags.z > 0.0)
+
+#define FF8_MAP vec2(262144.0, 196608.0)
+#define FF8_PLANET_RADIUS 41721.5
+
+// A mesh vertex (FF8's G space: x = map X, -z = map Z, +y down) -> unit vector on the planet,
+// true Mercator (conformal): map X is longitude, map Z the Mercator latitude, north positive.
+vec3 FF8PlanetUnit(vec3 g)
+{
+    vec2 m = vec2(g.x, -g.z);
+    m -= floor(m / FF8_MAP) * FF8_MAP;
+    float lon = m.x / FF8_PLANET_RADIUS;
+    float lat = 2.0 * atan(exp((0.5 * FF8_MAP.y - m.y) / FF8_PLANET_RADIUS)) - 1.5707963;
+    return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
+}
+
+// Same as mods/ff8-autoboot/globe_ff8.c globe_point() + to_virtual(): the camera-relative point FF8
+// would project (camera at the origin, +y down), so the mesh and FF8's own models agree exactly.
+vec3 FF8GlobePoint(vec3 unitP, float height)
+{
+    float e = dot(unitP, ff8Globe[2].xyz);
+    float u = dot(unitP, ff8Globe[3].xyz);
+    float n = dot(unitP, ff8Globe[4].xyz);
+    float sideways = sqrt(e * e + n * n);
+    float theta = atan2(sideways, u);
+    float radius = ff8Globe[1].y;
+    float r = radius + height;
+    float along = sideways > 1e-9 ? r * sin(theta) / sideways : 0.0;
+    vec3 p = vec3(ff8Globe[0].x + e * along, ff8Globe[0].z + radius - r * cos(theta), ff8Globe[0].y + n * along);
+    return vec3(p.x, p.y + ff8Globe[0].w, p.z) * ff8Globe[1].x;
+}
+
+// The mesh-space position relative to FF8's camera, on the nearest copy of the wrapping map.
+vec3 FF8CameraRelative(vec3 g)
+{
+    vec3 p = g - ff8Globe[3].xyz;
+    p.x -= floor(p.x / FF8_MAP.x + 0.5) * FF8_MAP.x;
+    p.z -= floor(p.z / FF8_MAP.y + 0.5) * FF8_MAP.y;
+    return p;
+}
+
+// FF8's own horizon bend (0x4022D0), for checking the projection against FF8's terrain.
+vec3 FF8Bend(vec3 p)
+{
+    float depth = clamp(floor(dot(ff8Globe[2].xyz, p) + 0.5), 0.0, 65535.0);
+    float d = floor(depth / 4.0) - ff8Globe[2].w;
+    if (d >= 0.0)
+    {
+        float relative = p.y - ff8Globe[0].z;
+        p.y = floor(relative * (4096.0 - d) / 4096.0) + ff8Globe[0].z + floor(d / 64.0) * floor(d / 64.0);
+    }
+    return p;
+}
+
+// FF8's TL depth (0x461210): linear in view z, z = floor(round(zv) / 8) * 1.5235901e-5 + 0.0015,
+// continued past FF8's 0x8000 limit by a log band, so the far side of the planet still sorts.
+float FF8Depth(float zv)
+{
+    float d = floor(floor(zv + 0.5) * 0.125);
+    if (d < 4095.0) return d * 1.5235901e-05 + 0.0015;
+    float z4095 = 4095.0 * 1.5235901e-05 + 0.0015;
+    return mix(z4095, 0.9999, saturate(log2(zv / 32760.0) / log2(4.0e6 / 32760.0)));
+}
 #define GAME_LIGHTING_PER_VERTEX 1
 
 void main()
@@ -91,10 +161,24 @@ void main()
         
         v_position0 = mul(worldView, vec4(pos.xyz, 1.0));
 
-        if (isApplySphericalWorld) pos.xyz = ApplySphericalWorld(v_position0.xyz, sphericaWorldRadiusScale);
-        else pos = v_position0;
+        if (isFF8WorldMesh)
+        {
+            vec3 p;
+            if (ff8Globe[1].w > 0.5) p = FF8GlobePoint(normalize(pos.xyz), 0.0);   // polar cap: unit vectors
+            else if (ff8Globe[1].z > 1.5) p = FF8Bend(FF8CameraRelative(pos.xyz));
+            else if (ff8Globe[1].z > 0.5) p = FF8GlobePoint(FF8PlanetUnit(pos.xyz), -pos.y);
+            else p = FF8CameraRelative(pos.xyz);
+            v_position0 = vec4(p, 1.0);
+            pos = mul(mul(d3dViewport, d3dProjection), vec4(p, 1.0));   // FF8's rotation and lens; w = view z
+            pos.z = FF8Depth(pos.w) * pos.w;
+        }
+        else
+        {
+            if (isApplySphericalWorld) pos.xyz = ApplySphericalWorld(v_position0.xyz, sphericaWorldRadiusScale);
+            else pos = v_position0;
 
-        pos = mul(mul(d3dViewport, d3dProjection), vec4(pos.xyz, 1.0));
+            pos = mul(mul(d3dViewport, d3dProjection), vec4(pos.xyz, 1.0));
+        }
         v_normal0 = mul(normalMatrix, vec4(a_normal, 0.0)).xyz;
 
         // In this default shader, lighting is applied in gamma space so that it does better match the original lighting

@@ -104,6 +104,7 @@ long game_lighting;
 bool enable_time_cycle;
 bool enable_external_mesh;
 bool enable_worldmap_external_mesh;
+bool ff8_world_external_mesh;
 bool ff7_external_opening_music;
 bool more_debug;
 bool ff8_ssigpu_debug;
@@ -275,6 +276,7 @@ void read_cfg()
 	enable_time_cycle = config["enable_time_cycle"].value_or(false);
 	enable_external_mesh = config["enable_external_mesh"].value_or(false);
 	enable_worldmap_external_mesh = config["enable_worldmap_external_mesh"].value_or(false);
+	ff8_world_external_mesh = config["ff8_world_external_mesh"].value_or(false);
 	ff7_external_opening_music = config["ff7_external_opening_music"].value_or(false);
 	more_debug = config["more_debug"].value_or(false);
 	ff8_ssigpu_debug = config["ff8_ssigpu_debug"].value_or(false);
