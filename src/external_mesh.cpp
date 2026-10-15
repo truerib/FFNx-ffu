@@ -433,7 +433,7 @@ bool ExternalMesh::importExternalMeshGltfFile(char* file_path, char* tex_path, b
         animations[animName] = outAnim;
     }
 
-    updateExternalMeshBuffers();
+    if (!deferBufferUpdates) updateExternalMeshBuffers();
 
     cgltf_free(data);
 

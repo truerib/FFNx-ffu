@@ -84,7 +84,9 @@ namespace ffu::ff8world
                 ffnx_error("FF8 world mesh: call at 0x%X goes to 0x%X, not 0x%X, hook skipped\n", site, target, expected);
                 return 0;
             }
-            return replace_call_function(site, hook);
+            // replace_call_function returns an index for undoing the patch, not the old target.
+            replace_call_function(site, hook);
+            return target;
         }
 
         void hook_terrain()       { renderer.snapshot(); ((plain_fn)orig_terrain)(); }
@@ -179,6 +181,7 @@ namespace ffu::ff8world
         // Base-colour DDS files live in <mod_path>/world/ (ExternalMesh's first lookup); tex_path is its
         // fallback. Forward slashes: the loader splits paths on '/' to find each <model>_config.toml.
         const std::string texPath = (std::filesystem::path(basedir) / mod_path / "world").generic_string() + "/";
+        mesh.deferBufferUpdates = true;
         for (const auto &file : files)
         {
             std::string path = file.generic_string(), tex = texPath;
@@ -201,13 +204,22 @@ namespace ffu::ff8world
             parts.push_back(part);
         }
 
-        // Each shape's place in the shared vertex/index buffers, so story variants can be skipped.
+        // One upload of everything, then the CPU copies go (FF8 is a 32-bit process); each shape keeps its
+        // place and size in the shared buffers, and its bounds for culling.
+        mesh.updateExternalMeshBuffers();
+        mesh.clearExternalMesh3dBuffers();
         uint32_t vertexOffset = 0, indexOffset = 0;
-        for (const auto &shape : mesh.shapes)
+        for (auto &shape : mesh.shapes)
         {
-            shapeOffsets.push_back({ vertexOffset, indexOffset });
-            vertexOffset += shape.vertices.size();
-            indexOffset += shape.indices.size();
+            const uint32_t vertices = shape.vertices.size(), indices = shape.indices.size();
+            shapeOffsets.push_back({ vertexOffset, indexOffset, vertices, indices });
+            vertexOffset += vertices;
+            indexOffset += indices;
+            std::vector<nvertex>().swap(shape.vertices);
+            std::vector<vector3<float>>().swap(shape.normals);
+            std::vector<vector4<float>>().swap(shape.joints);
+            std::vector<vector4<float>>().swap(shape.weights);
+            std::vector<uint32_t>().swap(shape.indices);
         }
 
         buildPolarCaps();
@@ -553,13 +565,13 @@ namespace ffu::ff8world
             {
                 const Shape &shape = mesh.shapes[i];
                 const bool isTranslucent = shape.materialName.find("_semi__") != std::string::npos;
-                if (isTranslucent != translucent || shape.indices.empty() || shape.pMaterial == nullptr
+                if (isTranslucent != translucent || shapeOffsets[i].indexCount == 0 || shape.pMaterial == nullptr
                     || shape.pMaterial->baseColorTexHandles.empty() || !shapeVisible(shape)) continue;
                 auto texture = shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex];
                 if (!bgfx::isValid(texture)) continue;
                 newRenderer.setCullMode(RendererCullMode::DISABLED);
-                mesh.bindField3dVertexBuffer(shapeOffsets[i].vertex, shape.vertices.size());
-                mesh.bindField3dIndexBuffer(shapeOffsets[i].index, shape.indices.size());
+                mesh.bindField3dVertexBuffer(shapeOffsets[i].vertex, shapeOffsets[i].vertexCount);
+                mesh.bindField3dIndexBuffer(shapeOffsets[i].index, shapeOffsets[i].indexCount);
                 newRenderer.useTexture(texture.idx, RendererTextureSlot::TEX_Y);
                 newRenderer.bindTextures();
                 newRenderer.draw(true, true, true);

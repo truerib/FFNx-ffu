@@ -95,6 +95,10 @@ public:
 
     std::vector<Shape> shapes;
 	std::map<std::string, Material> materials;
+    // Large multi-file meshes (FF8's world, 40 files): skip the full re-upload after every file, which
+    // queued ever-growing copies and ran a 32-bit game out of address space; call
+    // updateExternalMeshBuffers() once after the last file instead.
+    bool deferBufferUpdates = false;
     std::vector<Skin> skins;
     std::map<std::string, Animation> animations;
 private:

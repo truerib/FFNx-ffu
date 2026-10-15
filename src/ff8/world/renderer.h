@@ -77,7 +77,7 @@ namespace ffu::ff8world
         bool hexField = false;
     };
 
-    struct ShapeOffset { uint32_t vertex, index; };
+    struct ShapeOffset { uint32_t vertex, index, vertexCount, indexCount; };
 
     class Renderer
     {
