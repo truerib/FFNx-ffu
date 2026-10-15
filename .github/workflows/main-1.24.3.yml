@@ -2,16 +2,11 @@ name: FFNx
 
 run-name: 1.24.3.${{ github.run_number }}
 
+# Final Fantasy Universe fork: builds only when started by hand (Actions tab or `gh workflow run`),
+# because Windows minutes on a private repo count double. Release/VirusTotal/alert steps never run
+# here: build.ps1 only enables them for upstream's master and tags.
 on:
   workflow_dispatch:
-  push:
-    branches:
-    - master
-    tags:
-    - "*"
-  pull_request:
-    branches:
-    - master
 
 env:
   _IS_BUILD_CANARY: false
