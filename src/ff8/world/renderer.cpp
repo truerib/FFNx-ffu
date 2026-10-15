@@ -219,14 +219,15 @@ namespace ffu::ff8world
         cam.valid = false;
     }
 
-    // Two ocean caps beyond the map's north and south edges (true Mercator stops at +-78.8 degrees).
+    // Two ocean caps beyond the map's north and south edges (true Mercator stops at +-79.2 degrees).
     // Vertices are unit vectors on the planet (y = north); the shader's cap mode places them.
     void Renderer::buildPolarCaps()
     {
         constexpr int RINGS = 12, SECTORS = 192;
         const float edge = 2.0f * std::atan(std::exp(0.5f * MAP_HEIGHT / PLANET_RADIUS)) - 1.5707963f;
-        // FF8's open sea at the map's edges (Map-RF's world map image samples about this colour).
-        const uint32_t ocean = 0xFF1B3F6B;   // BGRA as the vertex layout stores it: (0x6B, 0x3F, 0x1B)
+        // FF8's open sea along the map's north and south edges (median of those rows of the real terrain,
+        // tools/ff8world planet): RGB (33, 57, 74).
+        const uint32_t ocean = 0xFF21394A;   // A R G B in the vertex layout's uint32
 
         for (int hemisphere = 0; hemisphere < 2; ++hemisphere)
         {
