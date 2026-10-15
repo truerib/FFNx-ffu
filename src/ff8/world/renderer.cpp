@@ -284,6 +284,9 @@ namespace ffu::ff8world
             if (state && state->magic == GLOBE_MAGIC) dllGlobe = state;
         }
         cam.hasGlobe = dllGlobe != nullptr && dllGlobe->mode > 0.5f && dllGlobe->mode < 1.5f;
+        if (!dllAirships && dllGlobe)
+            dllAirships = (AirshipPose *)GetProcAddress(GetModuleHandleA("dinput.dll"), "ffu_ff8_airships");
+        if (dllAirships) ::memcpy(cam.airships, dllAirships, sizeof(cam.airships));
         if (dllGlobe)
         {
             cam.globe = *dllGlobe;
@@ -428,6 +431,71 @@ namespace ffu::ff8world
         }
     }
 
+    ExternalMesh* Renderer::airshipMesh(const char* id)
+    {
+        const std::string key(id, strnlen(id, sizeof(AirshipPose::id)));
+        auto found = airshipMeshes.find(key);
+        if (found != airshipMeshes.end()) return found->second.get();
+        auto &slot = airshipMeshes[key];
+        const std::filesystem::path file = std::filesystem::path(basedir) / external_mesh_path / "airships" / (key + ".gltf");
+        auto mesh = std::make_unique<ExternalMesh>();
+        std::string path = file.generic_string();
+        std::string tex = (std::filesystem::path(basedir) / mod_path / "world").generic_string() + "/";
+        if (std::filesystem::exists(file) && mesh->importExternalMeshGltfFile(path.data(), tex.data(), true) && !mesh->shapes.empty())
+        {
+            ffnx_info("FF8 world mesh: airship %s loaded (%u shapes)\n", key.c_str(), (uint32_t)mesh->shapes.size());
+            slot = std::move(mesh);
+        }
+        else ffnx_error("FF8 world mesh: no airship model %s\n", path.c_str());
+        return slot.get();
+    }
+
+    // Airships drawn from their real models (AirshipPose). They climb with the camera, so the shader only
+    // applies the virtual scale (the camera's climb leaves them where they are relative to it).
+    void Renderer::drawAirships()
+    {
+        if (!cam.hasGlobe) return;
+        for (const auto &pose : cam.airships)
+        {
+            if (!pose.visible || !pose.id[0]) continue;
+            ExternalMesh *model = airshipMesh(pose.id);
+            if (!model) continue;
+            struct matrix place = {};
+            for (int row = 0; row < 3; ++row)
+            {
+                for (int column = 0; column < 3; ++column) place.m[column][row] = pose.model[row * 4 + column];   // row vectors
+                place.m[3][row] = pose.model[row * 4 + 3];
+            }
+            place._44 = 1.0f;
+            float globe[24];
+            fillGlobeUniform(globe, Part::World);
+            globe[6] = 5.0f;
+            newRenderer.setWorldViewMatrix(&place, false);
+            newRenderer.setFF8WorldMesh(true, globe);
+            newRenderer.isTexture(true);
+            newRenderer.setCommonUniforms();
+            uint32_t vertexOffset = 0, indexOffset = 0;
+            for (const auto &shape : model->shapes)
+            {
+                if (shape.pMaterial && !shape.pMaterial->baseColorTexHandles.empty()
+                    && bgfx::isValid(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex]))
+                {
+                    newRenderer.setCullMode(shape.isDoubleSided ? RendererCullMode::DISABLED : RendererCullMode::BACK);
+                    model->bindField3dVertexBuffer(vertexOffset, shape.vertices.size());
+                    model->bindField3dIndexBuffer(indexOffset, shape.indices.size());
+                    newRenderer.useTexture(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex].idx, RendererTextureSlot::TEX_Y);
+                    newRenderer.bindTextures();
+                    newRenderer.draw(true, true, true);
+                }
+                vertexOffset += shape.vertices.size();
+                indexOffset += shape.indices.size();
+            }
+        }
+        struct matrix identity;
+        identity_matrix(&identity);
+        newRenderer.setWorldViewMatrix(&identity, false);
+    }
+
     // Story variants: the 16-bit world flags at 0x2036BB6 pick each variant file; the hexagon field around
     // Esthar is only shown while ([0x2036BD8] & 0x1F) is 3 or 4 (FF8 wipes its texture otherwise).
     bool Renderer::partVisible(const MeshPart &part) const
@@ -540,6 +608,7 @@ namespace ffu::ff8world
         }
 
         drawOtherPlanets();
+        drawAirships();
 
         newRenderer.discardAllBindings();
         newRenderer.setFF8WorldMesh(false);

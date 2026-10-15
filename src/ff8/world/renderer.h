@@ -16,6 +16,9 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "../../external_mesh.h"
@@ -41,6 +44,18 @@ namespace ffu::ff8world
         volatile int32_t meshActive;   // written by us: the DLL then skips its own far-side fallback
     };
 
+    // Exported by the proxy dinput.dll as `ffu_ff8_airships[FF8_AIRSHIP_SLOTS]`: airships the fork draws
+    // from their real models (mesh/airships/<id>.gltf): FF8's own Ragnarok in space, and guests from the
+    // other games. `model` maps a model-space point v to the camera-relative frame (FF8 units, camera at
+    // the origin, +y down): p = model[0..2] . v + model[3], row by row (3 rows of 4).
+    constexpr int FF8_AIRSHIP_SLOTS = 4;
+    struct AirshipPose
+    {
+        char id[24];             // file stem under mesh/airships, e.g. "ff8_ragnarok"
+        int32_t visible;
+        float model[12];
+    };
+
     struct CameraSnapshot
     {
         int16_t m[3][3] = {};   // 0x2040140: GTE rotation, rows, 4096 = 1.0
@@ -50,6 +65,7 @@ namespace ffu::ff8world
         int32_t refBlockX = 0, refBlockZ = 0;
         int32_t curveStart = 0x1460;
         GlobeState globe = {};
+        AirshipPose airships[FF8_AIRSHIP_SLOTS] = {};
         bool hasGlobe = false;
         bool valid = false;
     };
@@ -80,6 +96,8 @@ namespace ffu::ff8world
         void buildPolarCaps();
         void loadOtherPlanets();
         void drawOtherPlanets();
+        void drawAirships();
+        ExternalMesh* airshipMesh(const char* id);
         void drawShapes(bool translucent);
         bool partVisible(const MeshPart& part) const;
         void animateTextures();
@@ -93,6 +111,8 @@ namespace ffu::ff8world
         std::vector<ShapeOffset> shapeOffsets;
         CameraSnapshot cam;
         GlobeState* dllGlobe = nullptr;
+        AirshipPose* dllAirships = nullptr;
+        std::map<std::string, std::unique_ptr<ExternalMesh>> airshipMeshes;   // nullptr: not found
         bool loaded = false;
         bool loadAttempted = false;
     };

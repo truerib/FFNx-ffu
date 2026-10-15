@@ -50,7 +50,8 @@ uniform vec4 VSFlags;
 uniform vec4 WMFlags;
 // Final Fantasy Universe: FF8's whole world map as a 3D mesh (src/ff8/world/renderer.cpp)
 //  [0] anchor x, anchor z (camera-relative), camera height C.y, virtual altitude
-//  [1] virtual scale, planet radius, mode (0 flat, 1 globe, 2 FF8's own bend), polar-cap draw (1)
+//  [1] virtual scale, planet radius, mode (0 flat, 1 globe, 2 FF8's own bend, 4 other planet,
+//      5 airship: worldView places the model in the camera-relative frame), polar-cap draw (1)
 //  [2] globe: east axis | bend: depth row R3 (xyz) + curve start (w)
 //  [3] globe: up axis   | flat/bend: camera position in mesh space (xyz)
 //  [4] globe: north axis
@@ -175,7 +176,8 @@ void main()
         if (isFF8WorldMesh)
         {
             vec3 p;
-            if (ff8Globe[1].z > 3.5) p = FF8OtherPlanetPoint(normalize(pos.xyz));
+            if (ff8Globe[1].z > 4.5) p = v_position0.xyz * ff8Globe[1].x;   // airship: climbs with the camera
+            else if (ff8Globe[1].z > 3.5) p = FF8OtherPlanetPoint(normalize(pos.xyz));
             else if (ff8Globe[1].w > 0.5) p = FF8GlobePoint(normalize(pos.xyz), 0.0);   // polar cap: unit vectors
             else if (ff8Globe[1].z > 1.5) p = FF8Bend(FF8CameraRelative(pos.xyz));
             else if (ff8Globe[1].z > 0.5) p = FF8GlobePoint(FF8PlanetUnit(pos.xyz), -pos.y);
