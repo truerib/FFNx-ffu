@@ -191,7 +191,7 @@ void Renderer::setCommonUniforms()
     setUniform(RendererUniform::FS_MOVIE_FLAGS, internalState.FSMovieFlags.data());
     setUniform(RendererUniform::FS_MORE_MOVIE_FLAGS, internalState.FSMoreMovieFlags.data());
     setUniform(RendererUniform::WM_FLAGS, internalState.WMFlags.data());
-    setUniform(RendererUniform::FF8_GLOBE, internalState.ff8Globe, 5);
+    setUniform(RendererUniform::FF8_GLOBE, internalState.ff8Globe, 6);
     setUniform(RendererUniform::SKINNING_FLAGS, internalState.SmoothSkinningFlags.data());
     setUniform(RendererUniform::TIME_COLOR, internalState.TimeColor.data());
     setUniform(RendererUniform::TIME_DATA, internalState.TimeData.data());
@@ -1109,7 +1109,7 @@ void Renderer::init()
     bgfxUniformHandles[RendererUniform::FS_MOVIE_FLAGS] = createUniform("FSMovieFlags", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::FS_MORE_MOVIE_FLAGS] = createUniform("FSMoreMovieFlags", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::WM_FLAGS] = createUniform("WMFlags", bgfx::UniformType::Vec4);
-    bgfxUniformHandles[RendererUniform::FF8_GLOBE] = bgfx::createUniform("ff8Globe", bgfx::UniformType::Vec4, 5);
+    bgfxUniformHandles[RendererUniform::FF8_GLOBE] = bgfx::createUniform("ff8Globe", bgfx::UniformType::Vec4, 6);
     bgfxUniformHandles[RendererUniform::TIME_COLOR] = createUniform("TimeColor", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::TIME_DATA] = createUniform("TimeData", bgfx::UniformType::Vec4);
 

@@ -54,7 +54,8 @@ uniform vec4 WMFlags;
 //  [2] globe: east axis | bend: depth row R3 (xyz) + curve start (w)
 //  [3] globe: up axis   | flat/bend: camera position in mesh space (xyz)
 //  [4] globe: north axis
-uniform vec4 ff8Globe[5];
+//  [5] other planet: its centre minus FF8's (solar frame, planet radii, docs/space.md), game units per radius
+uniform vec4 ff8Globe[6];
 
 #define isTLVertex VSFlags.x > 0.0
 #define blendMode VSFlags.y
@@ -96,6 +97,16 @@ vec3 FF8GlobePoint(vec3 unitP, float height)
     float along = sideways > 1e-9 ? r * sin(theta) / sideways : 0.0;
     vec3 p = vec3(ff8Globe[0].x + e * along, ff8Globe[0].z + radius - r * cos(theta), ff8Globe[0].y + n * along);
     return vec3(p.x, p.y + ff8Globe[0].w, p.z) * ff8Globe[1].x;
+}
+
+// Another game's planet (docs/space.md): a point of a unit sphere around that planet's solar centre, in
+// the same camera-relative, climbed and scaled frame as FF8's own globe. Planet axes = solar axes.
+vec3 FF8OtherPlanetPoint(vec3 unitP)
+{
+    vec3 d = ff8Globe[5].xyz + unitP;
+    vec3 centre = vec3(ff8Globe[0].x, ff8Globe[0].z + ff8Globe[1].y, ff8Globe[0].y);
+    vec3 q = centre + ff8Globe[5].w * vec3(dot(d, ff8Globe[2].xyz), -dot(d, ff8Globe[3].xyz), dot(d, ff8Globe[4].xyz));
+    return vec3(q.x, q.y + ff8Globe[0].w, q.z) * ff8Globe[1].x;
 }
 
 // The mesh-space position relative to FF8's camera, on the nearest copy of the wrapping map.
@@ -164,7 +175,8 @@ void main()
         if (isFF8WorldMesh)
         {
             vec3 p;
-            if (ff8Globe[1].w > 0.5) p = FF8GlobePoint(normalize(pos.xyz), 0.0);   // polar cap: unit vectors
+            if (ff8Globe[1].z > 3.5) p = FF8OtherPlanetPoint(normalize(pos.xyz));
+            else if (ff8Globe[1].w > 0.5) p = FF8GlobePoint(normalize(pos.xyz), 0.0);   // polar cap: unit vectors
             else if (ff8Globe[1].z > 1.5) p = FF8Bend(FF8CameraRelative(pos.xyz));
             else if (ff8Globe[1].z > 0.5) p = FF8GlobePoint(FF8PlanetUnit(pos.xyz), -pos.y);
             else p = FF8CameraRelative(pos.xyz);

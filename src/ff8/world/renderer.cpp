@@ -210,6 +210,7 @@ namespace ffu::ff8world
         }
 
         buildPolarCaps();
+        loadOtherPlanets();
         loaded = !mesh.shapes.empty();
         ffnx_info("FF8 world mesh: %u shapes, %u vertices from %u files\n", (uint32_t)mesh.shapes.size(), vertexOffset, (uint32_t)files.size());
     }
@@ -319,9 +320,9 @@ namespace ffu::ff8world
         multiply_matrix(&rotation, &lens, &projection);
     }
 
-    void Renderer::fillGlobeUniform(float out[20], bool polarCap) const
+    void Renderer::fillGlobeUniform(float out[24], Part part, const float* planetOffset) const
     {
-        ::memset(out, 0, sizeof(float) * 20);
+        ::memset(out, 0, sizeof(float) * 24);
         // Camera position in the mesh's space (FF8's G space), for the flat and FF8-bend modes.
         const float cameraX = float(cam.refBlockX) * 2048.0f - float(cam.c[0]);
         const float cameraY = -float(cam.c[1]);
@@ -342,7 +343,89 @@ namespace ffu::ff8world
             out[11] = float(cam.curveStart);
             out[12] = cameraX; out[13] = cameraY; out[14] = cameraZ;
         }
-        out[7] = polarCap ? 1.0f : 0.0f;
+        out[7] = part == Part::PolarCap ? 1.0f : 0.0f;
+        if (part == Part::OtherPlanet && planetOffset)
+        {
+            out[6] = 4.0f;
+            out[20] = planetOffset[0]; out[21] = planetOffset[1]; out[22] = planetOffset[2];
+            out[23] = PLANET_RADIUS;   // FF8 units per planet radius, in space (docs/space.md)
+        }
+    }
+
+    // The other planets of docs/space.md, as seen from FF8's: their real worlds (tools/ff8world planet,
+    // tools/ff7planet, FF9's) on unit spheres at their solar centres, relative to FF8's centre.
+    void Renderer::loadOtherPlanets()
+    {
+        struct Known { const char* id; float x, y, z; };
+        const Known known[] = { { "ff7", 0.0f, 0.0f, 20.0f }, { "ff9", -17.3205f, 0.0f, -10.0f } };
+        const float self[3] = { 17.3205f, 0.0f, -10.0f };
+        for (const auto &planet : known)
+        {
+            char path[MAX_PATH];
+            _snprintf(path, sizeof(path), "%s/%s/planets/%s_planet.dds", basedir, external_mesh_path.c_str(), planet.id);
+            uint32_t width = 0, height = 0, mips = 0;
+            auto texture = newRenderer.createTextureHandle(path, &width, &height, &mips);
+            if (!texture.idx) { ffnx_info("FF8 world mesh: no %s, that planet is not drawn\n", path); continue; }
+            otherPlanets.push_back({ planet.id, { planet.x - self[0], planet.y - self[1], planet.z - self[2] }, texture });
+        }
+        if (otherPlanets.empty()) return;
+
+        constexpr int RINGS = 64, SECTORS = 128;
+        Shape shape;
+        for (int ring = 0; ring <= RINGS; ++ring)
+        {
+            const float lat = 1.5707963f - 3.1415927f * float(ring) / RINGS;
+            for (int sector = 0; sector <= SECTORS; ++sector)
+            {
+                const float lon = 6.2831853f * float(sector) / SECTORS;   // 0 at +Z, east towards +X
+                struct nvertex vertex = {};
+                vertex._.x = std::cos(lat) * std::sin(lon);
+                vertex._.y = std::sin(lat);
+                vertex._.z = std::cos(lat) * std::cos(lon);
+                vertex.color.color = 0xFFFFFFFF;
+                vertex.color.w = 1.0f;
+                vertex.u = float(sector) / SECTORS;
+                vertex.v = float(ring) / RINGS;
+                shape.vertices.push_back(vertex);
+                shape.normals.push_back({ vertex._.x, vertex._.y, vertex._.z });
+                shape.joints.push_back({});
+                shape.weights.push_back({});
+            }
+        }
+        for (int ring = 0; ring < RINGS; ++ring)
+            for (int sector = 0; sector < SECTORS; ++sector)
+            {
+                const uint32_t a = ring * (SECTORS + 1) + sector, b = a + SECTORS + 1;
+                for (uint32_t index : { a, b, a + 1, a + 1, b, b + 1 }) shape.indices.push_back(index);
+            }
+        sphere.fillExternalMeshVertexBuffer(shape.vertices.data(), shape.normals.data(), shape.joints.data(), shape.weights.data(), shape.vertices.size());
+        sphere.fillExternalMeshIndexBuffer(shape.indices.data(), shape.indices.size());
+        sphere.shapes.push_back(std::move(shape));
+        sphere.updateExternalMeshBuffers();
+        ffnx_info("FF8 world mesh: %u other planets loaded\n", (uint32_t)otherPlanets.size());
+    }
+
+    void Renderer::drawOtherPlanets()
+    {
+        // Only once the sky is black: the planets are lit worlds, and FF8's 2D sky can't show them through
+        // its atmosphere colours.
+        if (otherPlanets.empty() || sphere.shapes.empty() || !cam.hasGlobe || cam.globe.space < 0.98f) return;
+        const Shape &shape = sphere.shapes[0];
+        newRenderer.isTexture(true);
+        newRenderer.doTextureFiltering(true);
+        for (const auto &planet : otherPlanets)
+        {
+            float globe[24];
+            fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
+            newRenderer.setFF8WorldMesh(true, globe);
+            newRenderer.setCommonUniforms();
+            newRenderer.setCullMode(RendererCullMode::DISABLED);
+            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+            sphere.bindField3dIndexBuffer(0, shape.indices.size());
+            newRenderer.useTexture(planet.texture.idx, RendererTextureSlot::TEX_Y);
+            newRenderer.bindTextures();
+            newRenderer.draw(true, true, true);
+        }
     }
 
     // Story variants: the 16-bit world flags at 0x2036BB6 pick each variant file; the hexagon field around
@@ -422,8 +505,8 @@ namespace ffu::ff8world
         newRenderer.setWorldViewMatrix(&identity, false);
 
         animateTextures();
-        float globe[20];
-        fillGlobeUniform(globe, false);
+        float globe[24];
+        fillGlobeUniform(globe, Part::World);
         newRenderer.setFF8WorldMesh(true, globe);
         newRenderer.isTexture(true);
         newRenderer.setCommonUniforms();
@@ -440,7 +523,7 @@ namespace ffu::ff8world
 
         if (cam.hasGlobe && !caps.shapes.empty())
         {
-            fillGlobeUniform(globe, true);
+            fillGlobeUniform(globe, Part::PolarCap);
             newRenderer.setFF8WorldMesh(true, globe);
             newRenderer.isTexture(false);
             newRenderer.setCommonUniforms();
@@ -455,6 +538,8 @@ namespace ffu::ff8world
                 indexOffset += shape.indices.size();
             }
         }
+
+        drawOtherPlanets();
 
         newRenderer.discardAllBindings();
         newRenderer.setFF8WorldMesh(false);

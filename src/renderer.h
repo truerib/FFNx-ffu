@@ -144,7 +144,7 @@ enum RendererUniform
     LIGHT_INV_VIEW_PROJ_TEX_MATRIX,
     VIEW_OFFSET_MATRIX,
     INV_VIEW_OFFSET_MATRIX,
-    FF8_GLOBE,              // Final Fantasy Universe: FF8 world mesh globe state (vec4 x 5)
+    FF8_GLOBE,              // Final Fantasy Universe: FF8 world mesh globe state (vec4 x 6)
 
     BONE_MATRICES,
     SKINNING_FLAGS,
@@ -321,7 +321,7 @@ private:
         std::vector<float> FSHDRFlags;
         std::vector<float> FSTexFlags;
         std::vector<float> WMFlags;
-        float ff8Globe[20] = {};
+        float ff8Globe[24] = {};
         bool bIsFF8WorldMesh = false;
         std::vector<float> FSMovieFlags;
         std::vector<float> SmoothSkinningFlags;

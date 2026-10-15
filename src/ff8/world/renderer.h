@@ -37,6 +37,7 @@ namespace ffu::ff8world
         float anchorX, anchorZ, cameraY, altitude;
         float scale, radius, mode, reserved;
         float east[4], up[4], north[4];
+        float space;                   // 0 in the atmosphere .. 1 in space (the sky is black)
         volatile int32_t meshActive;   // written by us: the DLL then skips its own far-side fallback
     };
 
@@ -74,14 +75,20 @@ namespace ffu::ff8world
 
     private:
         void buildProjection(struct matrix& projection) const;
-        void fillGlobeUniform(float out[20], bool polarCap) const;
+        enum class Part { World, PolarCap, OtherPlanet };
+        void fillGlobeUniform(float out[24], Part part, const float* planetOffset = nullptr) const;
         void buildPolarCaps();
+        void loadOtherPlanets();
+        void drawOtherPlanets();
         void drawShapes(bool translucent);
         bool partVisible(const MeshPart& part) const;
         void animateTextures();
 
         ExternalMesh mesh;
         ExternalMesh caps;
+        ExternalMesh sphere;    // unit sphere with equirectangular UVs, for the other planets
+        struct OtherPlanet { const char* id; float offset[3]; bgfx::TextureHandle texture = BGFX_INVALID_HANDLE; };
+        std::vector<OtherPlanet> otherPlanets;
         std::vector<MeshPart> parts;
         std::vector<ShapeOffset> shapeOffsets;
         CameraSnapshot cam;
