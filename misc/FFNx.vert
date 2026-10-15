@@ -78,8 +78,9 @@ uniform vec4 ff8Globe[6];
 // true Mercator (conformal): map X is longitude, map Z the Mercator latitude, north positive.
 vec3 FF8PlanetUnit(vec3 g)
 {
-    vec2 m = vec2(g.x, -g.z);
-    m -= floor(m / FF8_MAP) * FF8_MAP;
+    // x wraps by itself (sin/cos are periodic); z must not wrap: the south edge (G.z = -196608) would
+    // jump to the north pole.
+    vec2 m = vec2(g.x, clamp(-g.z, 0.0, FF8_MAP.y));
     float lon = m.x / FF8_PLANET_RADIUS;
     float lat = 2.0 * atan(exp((0.5 * FF8_MAP.y - m.y) / FF8_PLANET_RADIUS)) - 1.5707963;
     return vec3(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
@@ -186,8 +187,9 @@ void main()
             else p = FF8CameraRelative(pos.xyz);
             v_position0 = vec4(p, 1.0);
             pos = mul(mul(d3dViewport, d3dProjection), vec4(p, 1.0));   // FF8's rotation and lens; w = view z
-            pos.z = FF8Depth(pos.w) * pos.w;
-            if (ff8Globe[1].z > 5.5) pos.z = 0.99997 * pos.w;   // just in front of the sky, behind everything else
+            // Behind the camera: z = w, so a triangle crossing the camera plane is clipped where w >= 0.
+            pos.z = pos.w > 0.0 ? FF8Depth(pos.w) * pos.w : pos.w;
+            if (ff8Globe[1].z > 5.5 && pos.w > 0.0) pos.z = 0.99997 * pos.w;   // shell: in front of the sky only
         }
         else
         {

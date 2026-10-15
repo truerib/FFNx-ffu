@@ -29,6 +29,7 @@
 #include "../../patch.h"
 #include "../../renderer.h"
 #include "../../ff8.h"
+#include "../../gl.h"
 
 // Addresses are FF8 1.2 US (FF8.exe as run by FF8 Remastered through FFNx); the hooks are only
 // installed for that build, and every call site is checked before it is replaced.
@@ -204,6 +205,11 @@ namespace ffu::ff8world
             parts.push_back(part);
         }
 
+        if (mesh.shapes.empty())
+        {
+            ffnx_error("FF8 world mesh: no shapes loaded; FF8 keeps drawing its own terrain\n");
+            return;
+        }
         // One upload of everything, then the CPU copies go (FF8 is a 32-bit process); each shape keeps its
         // place and size in the shared buffers, and its bounds for culling.
         mesh.updateExternalMeshBuffers();
@@ -293,13 +299,18 @@ namespace ffu::ff8world
 
         if (!dllGlobe)
         {
-            HMODULE proxy = GetModuleHandleA("dinput.dll");
+            // The proxy in the game folder, not the system dinput.dll it loads itself.
+            char path[MAX_PATH] = {};
+            GetModuleFileNameA(NULL, path, sizeof(path));
+            char *slash = strrchr(path, '\\');
+            if (slash) strcpy(slash + 1, "dinput.dll");
+            HMODULE proxy = GetModuleHandleA(path);
             auto state = proxy ? (GlobeState *)GetProcAddress(proxy, "ffu_ff8_globe") : nullptr;
-            if (state && state->magic == GLOBE_MAGIC) dllGlobe = state;
+            if (state && state->magic == GLOBE_MAGIC) { dllGlobe = state; dllModule = proxy; }
         }
         cam.hasGlobe = dllGlobe != nullptr && dllGlobe->mode > 0.5f && dllGlobe->mode < 1.5f;
         if (!dllAirships && dllGlobe)
-            dllAirships = (AirshipPose *)GetProcAddress(GetModuleHandleA("dinput.dll"), "ffu_ff8_airships");
+            dllAirships = (AirshipPose *)GetProcAddress(dllModule, "ffu_ff8_airships");
         if (dllAirships) ::memcpy(cam.airships, dllAirships, sizeof(cam.airships));
         if (dllGlobe)
         {
@@ -365,7 +376,7 @@ namespace ffu::ff8world
         {
             out[6] = 4.0f;
             out[20] = planetOffset[0]; out[21] = planetOffset[1]; out[22] = planetOffset[2];
-            out[23] = PLANET_RADIUS;   // FF8 units per planet radius, in space (docs/space.md)
+            out[23] = cam.globe.radius;   // FF8 units per planet radius, the same as FF8's own globe this frame
         }
     }
 
@@ -432,8 +443,48 @@ namespace ffu::ff8world
     // is computed per pixel in FFNx.frag (FF8Atmosphere) and faded in as FF8's own 2D sky fades out.
     void Renderer::afterDrawOT()
     {
-        if (!replacesTerrain() || !cam.valid || !cam.hasGlobe || sphere.shapes.empty() || cam.globe.space <= 0.0f) return;
+        if (!replacesTerrain() || !cam.valid) return;
         if (*(const uint32_t *)FRAME_DRAWN == 0) return;
+        struct driver_state saved;
+        gl_save_state(&saved);
+        newRenderer.doAlphaTest(false);
+        newRenderer.isFBTexture(false);
+        newRenderer.doModulateAlpha(true);
+        drawTranslucentTerrain();
+        if (cam.hasGlobe && !sphere.shapes.empty() && cam.globe.space > 0.0f) drawAtmosphere();
+        newRenderer.discardAllBindings();
+        newRenderer.setFF8WorldMesh(false);
+        gl_load_state(&saved);
+    }
+
+    // Semi-transparent terrain after FF8's opaque models, so models behind water or ground haze still show.
+    void Renderer::drawTranslucentTerrain()
+    {
+        struct matrix identity, projection;
+        identity_matrix(&identity);
+        buildProjection(projection);
+        newRenderer.setInterpolationQualifier(SMOOTH);
+        newRenderer.setPrimitiveType();
+        newRenderer.isTLVertex(false);
+        newRenderer.isExternalTexture(true);
+        newRenderer.isTexture(true);
+        newRenderer.doTextureFiltering(true);
+        newRenderer.setBlendMode(RendererBlendMode::BLEND_AVG);
+        newRenderer.doDepthTest(true);
+        newRenderer.doDepthWrite(false);
+        newRenderer.setD3DViweport(&identity);
+        newRenderer.setD3DProjectionRaw(&projection);
+        newRenderer.setWorldViewMatrix(&identity, false);
+        float globe[24];
+        fillGlobeUniform(globe, Part::World);
+        newRenderer.setFF8WorldMesh(true, globe);
+        newRenderer.setCommonUniforms();
+        drawShapes(true);
+        newRenderer.isExternalTexture(false);
+    }
+
+    void Renderer::drawAtmosphere()
+    {
         const Shape &shape = sphere.shapes[0];
         struct matrix identity, projection;
         identity_matrix(&identity);
@@ -455,18 +506,15 @@ namespace ffu::ff8world
         float globe[24];
         fillGlobeUniform(globe, Part::World);
         globe[6] = 6.0f;
-        globe[20] = cam.globe.space;              // fade
-        globe[23] = 0.6f * cam.globe.radius;      // shell height above the ground
+        // The shell always encloses the camera, so every sky pixel is covered exactly once.
+        globe[20] = cam.globe.space;                                                 // fade
+        globe[23] = float(cam.c[1]) + cam.globe.altitude + 0.25f * cam.globe.radius;   // above the ground
         newRenderer.setFF8WorldMesh(true, globe, true);
         newRenderer.setCommonUniforms();
-        newRenderer.setCullMode(RendererCullMode::FRONT);   // the far side of the shell only: no double glow
+        newRenderer.setCullMode(RendererCullMode::DISABLED);   // FFNx's FRONT mode is broken (missing break)
         sphere.bindField3dVertexBuffer(0, shape.vertices.size());
         sphere.bindField3dIndexBuffer(0, shape.indices.size());
         newRenderer.draw(true, true, true);
-        newRenderer.discardAllBindings();
-        newRenderer.setFF8WorldMesh(false);
-        newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
-        newRenderer.doDepthWrite(true);
     }
 
     void Renderer::drawOtherPlanets()
@@ -541,7 +589,9 @@ namespace ffu::ff8world
                 if (shape.pMaterial && !shape.pMaterial->baseColorTexHandles.empty()
                     && bgfx::isValid(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex]))
                 {
-                    newRenderer.setCullMode(shape.isDoubleSided ? RendererCullMode::DISABLED : RendererCullMode::BACK);
+                    // No culling: the airship glTFs keep FF8's winding reversed, and FFNx's FRONT mode is broken
+                    // (a missing break sets both cull bits).
+                    newRenderer.setCullMode(RendererCullMode::DISABLED);
                     model->bindField3dVertexBuffer(vertexOffset, shape.vertices.size());
                     model->bindField3dIndexBuffer(indexOffset, shape.indices.size());
                     newRenderer.useTexture(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex].idx, RendererTextureSlot::TEX_Y);
@@ -643,6 +693,12 @@ namespace ffu::ff8world
     {
         if (!replacesTerrain() || !cam.valid) return;
         if (*(const uint32_t *)FRAME_DRAWN == 0) return;
+        // FFNx only re-applies a render state when FF8's next batch asks for it, so ours must not leak.
+        struct driver_state saved;
+        gl_save_state(&saved);
+        newRenderer.doAlphaTest(false);
+        newRenderer.isFBTexture(false);
+        newRenderer.doModulateAlpha(true);
 
         newRenderer.setInterpolationQualifier(SMOOTH);
         newRenderer.setPrimitiveType();
@@ -672,14 +728,6 @@ namespace ffu::ff8world
         newRenderer.setCommonUniforms();
         drawShapes(false);
 
-        {
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_AVG);
-            newRenderer.doDepthWrite(false);
-            newRenderer.setCommonUniforms();
-            drawShapes(true);
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
-            newRenderer.doDepthWrite(true);
-        }
 
         if (cam.hasGlobe && !caps.shapes.empty())
         {
@@ -705,5 +753,6 @@ namespace ffu::ff8world
         newRenderer.discardAllBindings();
         newRenderer.setFF8WorldMesh(false);
         newRenderer.isExternalTexture(false);
+        gl_load_state(&saved);
     }
 }

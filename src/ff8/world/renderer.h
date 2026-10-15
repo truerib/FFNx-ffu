@@ -88,6 +88,8 @@ namespace ffu::ff8world
         void snapshot();
         void draw();
         void afterDrawOT();
+        void drawTranslucentTerrain();
+        void drawAtmosphere();
         bool replacesTerrain() const { return loaded && !mesh.shapes.empty(); }
 
     private:
@@ -114,6 +116,7 @@ namespace ffu::ff8world
         std::vector<ShapeOffset> shapeOffsets;
         CameraSnapshot cam;
         GlobeState* dllGlobe = nullptr;
+        HMODULE dllModule = nullptr;
         AirshipPose* dllAirships = nullptr;
         std::map<std::string, std::unique_ptr<ExternalMesh>> airshipMeshes;   // nullptr: not found
         bool loaded = false;
