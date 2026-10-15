@@ -17,12 +17,15 @@ env:
   _BUILD_BRANCH: "${{ github.ref }}"
   _CHANGELOG_VERSION: "0"
   # VCPKG: Enable Binary Caching
-  VCPKG_BINARY_SOURCES: "clear;nuget,github,${{ (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')) && 'readwrite' || 'read' }}"
+  VCPKG_BINARY_SOURCES: "clear;nuget,github,readwrite"   # fork: our own package feed, cached from any branch
   # GIT: Fix reporting from stderr to stdout
   GIT_REDIRECT_STDERR: 2>&1
 
 jobs:
   FFNx:
+    permissions:
+      contents: read
+      packages: write   # vcpkg binary cache in the owner's package feed
     runs-on: windows-2025-vs2026
     timeout-minutes: 1440
     strategy:
