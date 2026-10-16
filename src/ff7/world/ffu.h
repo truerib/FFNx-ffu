@@ -37,7 +37,9 @@ namespace ffu::ff7
 
     // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models
     // (mesh/airships/<id>.gltf, native axes), guests from the other games (docs/space.md "The airship's state").
-    // model: model space -> FF7 world space, row r: p[r] = model[4r..4r+2] . v + model[4r+3].
+    // model: row r: p[r] = model[4r..4r+2] . v + model[4r+3], from model space to FFNx's view space
+    // (AIRSHIP_WITH_CAMERA: the pose rides with this frame's camera exactly) or to FF7's world space
+    // (AIRSHIP_ON_PLANET).
     constexpr int AIRSHIP_SLOTS = 2;
     enum AirshipMode : int32_t
     {

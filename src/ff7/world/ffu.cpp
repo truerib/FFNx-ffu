@@ -137,7 +137,8 @@ namespace ffu::ff7
             place.m[3][row] = ship.model[row * 4 + 3];
         }
         place._44 = 1.0f;
-        multiply_matrix(&place, view, &worldView);
+        if (ship.mode == AIRSHIP_ON_PLANET) multiply_matrix(&place, view, &worldView);
+        else worldView = place;
 
         drawingWithCamera = ship.mode == AIRSHIP_WITH_CAMERA;
         newRenderer.setSphericalWorldRate(ship.mode == AIRSHIP_ON_PLANET ? 1.0f : 0.0f);
