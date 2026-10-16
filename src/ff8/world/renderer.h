@@ -127,7 +127,6 @@ namespace ffu::ff8world
         GlobeState* dllGlobe = nullptr;
         HMODULE dllModule = nullptr;
         AirshipPose* dllAirships = nullptr;
-        std::map<std::string, std::unique_ptr<ExternalMesh>> airshipMeshes;   // nullptr: not found
         bool loaded = false;
         bool loadAttempted = false;
     };

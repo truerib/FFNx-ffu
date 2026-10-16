@@ -30,6 +30,7 @@
 #include "../../matrix.h"
 #include "camera.h"
 #include "ffu.h"
+#include "../../ffu_airships.h"
 
 extern "C" __declspec(dllexport) ffu::ff7::Ffnx ffu_ff7_ffnx = {};
 
@@ -132,25 +133,11 @@ namespace ffu::ff7
         return c && c->version >= 4 && c->unitsPerR > 0.0f ? c->unitsPerR : 46936.7026f;
     }
 
-    // mesh/airships/<id>.gltf in native axes, textures from <mod_path>/world (as for FF8). nullptr: not found.
+    // mesh/airships/<id>.gltf in native axes, textures from <mod_path>/world, animated when it has frames
+    // (src/ffu_airships.cpp). nullptr: not found.
     static ExternalMesh *airshipMesh(const char *id)
     {
-        static std::map<std::string, std::unique_ptr<ExternalMesh>> meshes;
-        const std::string key(id, strnlen(id, sizeof(Airship::id)));
-        auto found = meshes.find(key);
-        if (found != meshes.end()) return found->second.get();
-        auto &slot = meshes[key];
-        const std::filesystem::path file = std::filesystem::path(basedir) / external_mesh_path / "airships" / (key + ".gltf");
-        auto mesh = std::make_unique<ExternalMesh>();
-        std::string path = file.generic_string();
-        std::string textures = (std::filesystem::path(basedir) / mod_path / "world").generic_string() + "/";
-        if (std::filesystem::exists(file) && mesh->importExternalMeshGltfFile(path.data(), textures.data(), true) && !mesh->shapes.empty())
-        {
-            ffnx_info("FF7 world: airship %s loaded (%u shapes)\n", key.c_str(), (uint32_t)mesh->shapes.size());
-            slot = std::move(mesh);
-        }
-        else ffnx_error("FF7 world: no airship model %s\n", path.c_str());
-        return slot.get();
+        return ffu::airshipModel(id, sizeof(Airship::id), "FF7 world");
     }
 
     static void drawAirship(const Airship &ship, ExternalMesh *model, struct matrix *view)
@@ -222,7 +209,9 @@ namespace ffu::ff7
             if (!slots[i]) continue;
             const Airship &ship = *slots[i];
             if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
-            const bool composited = i < AIRSHIP_SLOTS && !ownModel(ship.id) && newRenderer.ffuLayerLive(ship.id);
+            // Only a guest flying with the camera is its own game's live layer: a parked one is still a copy (its game is
+            // frozen), and swapping it for the last flying frame drew it in the wrong place for a moment.
+            const bool composited = i < AIRSHIP_SLOTS && ship.mode == AIRSHIP_WITH_CAMERA && !ownModel(ship.id) && newRenderer.ffuLayerLive(ship.id);
             ExternalMesh *model = composited ? nullptr : airshipMesh(ship.id);
             if (!model && !composited) continue;
             if (!stateSet)

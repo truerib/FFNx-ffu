@@ -14,6 +14,7 @@
 /****************************************************************************/
 
 #include "renderer.h"
+#include "../../ffu_airships.h"
 
 #include <algorithm>
 #include <cmath>
@@ -677,23 +678,10 @@ namespace ffu::ff8world
         }
     }
 
+    // mesh/airships/<id>.gltf, animated when it has frames (src/ffu_airships.cpp).
     ExternalMesh* Renderer::airshipMesh(const char* id)
     {
-        const std::string key(id, strnlen(id, sizeof(AirshipPose::id)));
-        auto found = airshipMeshes.find(key);
-        if (found != airshipMeshes.end()) return found->second.get();
-        auto &slot = airshipMeshes[key];
-        const std::filesystem::path file = std::filesystem::path(basedir) / external_mesh_path / "airships" / (key + ".gltf");
-        auto mesh = std::make_unique<ExternalMesh>();
-        std::string path = file.generic_string();
-        std::string tex = (std::filesystem::path(basedir) / mod_path / "world").generic_string() + "/";
-        if (std::filesystem::exists(file) && mesh->importExternalMeshGltfFile(path.data(), tex.data(), true) && !mesh->shapes.empty())
-        {
-            ffnx_info("FF8 world mesh: airship %s loaded (%u shapes)\n", key.c_str(), (uint32_t)mesh->shapes.size());
-            slot = std::move(mesh);
-        }
-        else ffnx_error("FF8 world mesh: no airship model %s\n", path.c_str());
-        return slot.get();
+        return ffu::airshipModel(id, sizeof(AirshipPose::id), "FF8 world mesh");
     }
 
     // Airships drawn from their real models (AirshipPose). They climb with the camera, so the shader only
@@ -762,7 +750,9 @@ namespace ffu::ff8world
         {
             if (!pose.visible || !pose.id[0]) continue;
             const bool own = !strncmp(pose.id, "ff8_", 4);
-            if (!own && newRenderer.ffuLayerLive(pose.id)) { live.push_back(pose.id); continue; }
+            // Only a guest flying with the camera (the proxy's visible = 2) is its own game's live layer; a parked one
+            // is still a copy (its game is frozen by then).
+            if (!own && pose.visible == 2 && newRenderer.ffuLayerLive(pose.id)) { live.push_back(pose.id); continue; }
             ExternalMesh *model = airshipMesh(pose.id);
             if (!model) continue;
             drawAirship(pose, model);

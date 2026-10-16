@@ -158,6 +158,7 @@ namespace
         int next = 0;
         uint32_t frames = 0, torn = 0, composited = 0;
         double copyMs = 0.0;
+        bool lastLive = false;               // what the last ffuLayerLive said, for the switch log
     };
     Guest guests[] = { { "ff7" }, { "ff8" }, { "ff9" } };
 
@@ -513,7 +514,22 @@ bool Renderer::ffuLayerLive(const char *id)
     Guest *guest = enabled ? guestFor(id) : nullptr;
     if (!guest) return false;
     receive(*guest, ffuLastFrame);
-    if (!fresh(*guest) || strncmp(guest->header.id, id, sizeof(guest->header.id)) || guest->header.unitsPerR <= 0.0f) return false;
+    // Every change between the live layer and the host's copy is logged, with why: a flicker between the two is
+    // found from these lines (2026-10-17, Richard saw flicker and a doubled airship).
+    const char *why = !fresh(*guest) ? (guest->lastSeq < 0 ? "no frame yet" : !guest->header.covered ? "nothing shown" : "stale")
+                    : strncmp(guest->header.id, id, sizeof(guest->header.id)) ? "another model" : guest->header.unitsPerR <= 0.0f ? "no scale" : nullptr;
+    const bool live = why == nullptr;
+    if (live != guest->lastLive)
+    {
+        LARGE_INTEGER now;
+        QueryPerformanceCounter(&now);
+        const double age = guest->header.frequency > 0 ? (now.QuadPart - guest->header.stamp) * 1000.0 / guest->header.frequency : -1.0;
+        ffnx_info("FFU layer: %s %s (frame %u, last %s frame %.0f ms old)\n", id, live ? "live" : "copy", ffuLastFrame,
+                  guest->game, age);
+        if (!live) ffnx_info("FFU layer: ... because %s\n", why);
+        guest->lastLive = live;
+    }
+    if (!live) return false;
     // Live only when it can be drawn: the caller then skips its copy.
     if (compositorState == 0)
     {
