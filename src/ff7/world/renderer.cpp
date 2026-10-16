@@ -29,6 +29,7 @@
 
 #include "../defs.h"
 #include "../../lighting.h"
+#include "ffu.h"
 
 namespace ff7::world {
 
@@ -167,8 +168,20 @@ namespace ff7::world {
                  camera.z + (radius + height) * sinf(theta) * dz };
     }
 
+    // FFU: while the bridge flies the camera (cameraOverride), FFNx's view takes the flight's camera exactly (with
+    // roll), but the game's own camera only follows the nearest pitch and yaw. FF7 projects its 2D world objects
+    // (this effect list, the Midgar Zolom) with its own camera, so in flight they land in the wrong place, the
+    // Zolom high in the sky. They are skipped then; on foot and in vehicles they draw as they should
+    // (docs/world-map-audit.md #1, #15). The fix is to draw them in 3D through the globe shader.
+    static bool ffuFlightCamera()
+    {
+        const ffu::ff7::Control *c = ffu::ff7::control();
+        return c && c->version >= 3 && c->cameraOverride;
+    }
+
     void world_draw_effects()
     {
+        if (ffuFlightCamera()) return;
         short v0;
         transform_matrix rot_matrix_0;
         transform_matrix rot_matrix_1;
@@ -235,6 +248,7 @@ namespace ff7::world {
     vector4<short>* previous_position_backup = nullptr;
     void animate_world_snake()
     {
+        if (ffuFlightCamera()) return;   // see ffuFlightCamera
         __int16 unknown;
         __int16 v1;
         __int16 v2;
