@@ -422,6 +422,12 @@ private:
     uint32_t ffuLayerPending = 0, ffuLastFrame = 0;
     std::vector<uint8_t> ffuLayerColour;
     std::vector<float> ffuLayerDepth;
+    RendererState ffuLayerState;            // the state the captured draws were made with
+    void (*ffuLayerDraw)() = nullptr;       // draws them again (ffuLayerCapture)
+    bgfx::ViewId ffuLayerViews[2] = { 0, 0 };
+    bool ffuLayerBegin();
+    void ffuLayerEnd();
+    void ffuLayerRender();
     void ffuLayerPoll();
 
     bgfx::TextureHandle specularIblTexture = BGFX_INVALID_HANDLE;
@@ -504,9 +510,11 @@ private:
 public:
     std::string currentRenderer;
 
-    // Final Fantasy Universe: the live layer (ffu_layer.cpp). Between Begin and End, draws go to the layer target.
-    bool ffuLayerBegin();
-    void ffuLayerEnd();
+    // Final Fantasy Universe: the live layer (ffu_layer.cpp). A caller that wants its draws in the layer captures
+    // the current state and a function that makes those draws again; they are replayed into the layer at the end
+    // of the frame, after all of FFNx's own views.
+    bool ffuLayerWanted();
+    void ffuLayerCapture(void (*draw)());
 
     // ---
 

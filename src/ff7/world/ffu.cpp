@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstring>
 
 #include "../../globals.h"
@@ -167,6 +168,17 @@ namespace ffu::ff7
         drawingWithCamera = false;
     }
 
+    // The ships drawn this frame, for the live layer's replay at the end of it (src/ffu_layer.cpp).
+    struct LayerShip { Airship ship; ExternalMesh *model; };
+    static std::vector<LayerShip> layerShips;
+    static struct matrix layerView;
+
+    static void drawLayerShips()
+    {
+        for (const auto &entry : layerShips) drawAirship(entry.ship, entry.model, &layerView);
+        layerShips.clear();
+    }
+
     static void drawAirships()
     {
         const Airship *ships = bridgeAirships();
@@ -203,17 +215,19 @@ namespace ffu::ff7
             drawAirship(ship, model, &view);
         }
         if (!stateSet) return;
-        // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): the same ships again, alone, into the layer
-        // target another game composites (docs/crossover-design.md).
-        if (newRenderer.ffuLayerBegin())
+        // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): the same ships again, alone, at the end of the
+        // frame, into the layer target another game composites (docs/crossover-design.md).
+        if (newRenderer.ffuLayerWanted())
         {
+            layerShips.clear();
             for (int i = 0; i < AIRSHIP_SLOTS; ++i)
             {
                 const Airship &ship = ships[i];
                 if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
-                if (ExternalMesh *model = airshipMesh(ship.id)) drawAirship(ship, model, &view);
+                if (ExternalMesh *model = airshipMesh(ship.id)) layerShips.push_back({ ship, model });
             }
-            newRenderer.ffuLayerEnd();
+            layerView = view;
+            if (!layerShips.empty()) newRenderer.ffuLayerCapture(&drawLayerShips);
         }
         newRenderer.discardAllBindings();
         newRenderer.setSphericalWorldRate(0.0f);

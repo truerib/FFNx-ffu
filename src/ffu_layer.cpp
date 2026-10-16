@@ -14,9 +14,11 @@
 /****************************************************************************/
 
 // Final Fantasy Universe: the live layer, step 2 (docs/crossover-design.md, spikes/live-layer-transport).
-// With FFU_FF7_LAYER=1, what the caller draws between ffuLayerBegin and ffuLayerEnd (FF7's flown airship,
-// src/ff7/world/ffu.cpp) is drawn a second time into an offscreen colour + depth target at half the internal
-// resolution, read back to the CPU, and published in Z:\tmp\ffu-layer-ff7.shm for another game to composite.
+// With FFU_FF7_LAYER=1, what a caller captured (FF7's flown airship, src/ff7/world/ffu.cpp: the state it was
+// drawn with and a function that draws it again) is drawn a second time at the end of the frame, after all of
+// FFNx's own views (interleaving the layer's views with FFNx's took the airship out of FF7's own picture), into
+// an offscreen colour + depth target at half the internal resolution, read back to the CPU, and published in
+// Z:\tmp\ffu-layer-ff7.shm for another game to composite. The layer's views are reset after the frame.
 // This is the measuring spike: every 120 readbacks the log gives what each step cost.
 
 #include <windows.h>
@@ -87,6 +89,34 @@ namespace
     }
 }
 
+bool Renderer::ffuLayerWanted()
+{
+    return layerWanted();
+}
+
+void Renderer::ffuLayerCapture(void (*draw)())
+{
+    if (!layerWanted()) return;
+    ffuLayerState = internalState;
+    ffuLayerDraw = draw;
+}
+
+void Renderer::ffuLayerRender()
+{
+    if (!ffuLayerDraw) return;
+    void (*draw)() = ffuLayerDraw;
+    ffuLayerDraw = nullptr;
+    RendererState current = internalState;
+    internalState = ffuLayerState;
+    if (ffuLayerBegin())
+    {
+        draw();
+        ffuLayerEnd();
+    }
+    discardAllBindings();
+    internalState = current;
+}
+
 bool Renderer::ffuLayerBegin()
 {
     if (!layerWanted() || ffuLayerActive) return false;
@@ -110,6 +140,7 @@ bool Renderer::ffuLayerBegin()
         ffnx_info("FFU layer: %ux%u target (half of %ux%u)\n", width, height, framebufferWidth, framebufferHeight);
     }
     ++backendViewId;
+    ffuLayerViews[0] = backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     bgfx::setViewFrameBuffer(backendViewId, ffuLayerFrameBuffer);
     bgfx::setViewRect(backendViewId, 0, 0, width, height);
@@ -124,6 +155,7 @@ void Renderer::ffuLayerEnd()
     if (!ffuLayerActive) return;
     ffuLayerActive = false;
     ++backendViewId;
+    ffuLayerViews[1] = backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     if (ffuLayerPending == 0)   // one readback in flight at a time
     {
@@ -137,12 +169,16 @@ void Renderer::ffuLayerEnd()
         requestedDepths[0] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 30000.0f);
         requestedDepths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
     }
-    ++backendViewId;   // what follows draws on the main framebuffer again (draw() sets it per call)
-    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
 }
 
 void Renderer::ffuLayerPoll()
 {
+    // The layer's views keep their framebuffer and clear until reset, and FFNx may use those ids next frame.
+    for (auto &view : ffuLayerViews)
+    {
+        if (view) bgfx::resetView(view);
+        view = 0;
+    }
     if (ffuLayerPending == 0 || ffuLastFrame < ffuLayerPending) return;
     LARGE_INTEGER ready, done;
     QueryPerformanceCounter(&ready);
