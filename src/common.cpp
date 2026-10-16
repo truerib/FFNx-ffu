@@ -1196,6 +1196,9 @@ void common_flip(struct game_obj *game_object)
 	time_t last_seconds = last_frame.time;
 	struct game_mode *mode = getmode_cached();
 
+	// Final Fantasy Universe: restart audio stopped by a freeze, apply the hub's music gain (ffu_audio.cpp)
+	nxAudioEngine.ffuFrame();
+
 	// Update RAM usage info
 	GlobalMemoryStatusEx(&last_ram_state);
 

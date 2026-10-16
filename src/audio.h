@@ -187,6 +187,9 @@ private:
 
 	float _previousMusicMasterVolume = -1.0f;
 	float _musicMasterVolume = -1.0f;
+	// Final Fantasy Universe: kept apart from the master volume, so the game's own changes to it (voice ducking
+	// and its restore) compose with the hub's mute instead of undoing it (ffu_audio.cpp)
+	float _ffuMusicGain = 1.0f;
 	SoLoud::time _lastVolumeFadeEndTime = 0.0;
 
 	void cleanOldAudioSources();
@@ -268,6 +271,9 @@ public:
 	bool isMusicPlaying(int channel);
 	uint32_t currentMusicId(int channel);
 	void setMusicMasterVolume(float volume, double time = 0);
+	// Final Fantasy Universe (ffu_audio.cpp)
+	void setFfuMusicGain(float gain, double time = 0);
+	void ffuFrame();
 	void restoreMusicMasterVolume(double time = 0);
 	float getMusicVolume(int channel);
 	bool isMusicVolumeFadeFinished();

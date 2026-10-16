@@ -719,7 +719,7 @@ bool NxAudioEngine::playMusic(const char* name, uint32_t id, int channel, MusicO
 		if (options.targetVolume >= 0.0f) {
 			music.wantedMusicVolume = options.targetVolume;
 		}
-		const float initialVolume = options.fadetime > 0.0 || offsetSeconds > 0.0 ? 0.0f : music.wantedMusicVolume * _musicMasterVolume;
+		const float initialVolume = options.fadetime > 0.0 || offsetSeconds > 0.0 ? 0.0f : music.wantedMusicVolume * _musicMasterVolume * _ffuMusicGain;
 		music.handle = _engine.playBackground(*audioSource, initialVolume, offsetSeconds > 0.0);
 		music.id = id;
 		music.sync = options.sync;
@@ -770,7 +770,7 @@ void NxAudioEngine::playSynchronizedMusics(const std::vector<std::string>& names
 		SoLoud::AudioSource* audioSource = loadMusic(name.c_str());
 
 		if (audioSource != nullptr) {
-			SoLoud::handle musicHandle = _engine.playBackground(*audioSource, _musicMasterVolume, true);
+			SoLoud::handle musicHandle = _engine.playBackground(*audioSource, _musicMasterVolume * _ffuMusicGain, true);
 			_engine.addVoiceToGroup(groupHandle, musicHandle);
 			// Keep audioSource pointer somewhere to delete it after musicHandle is stopped
 			_audioSourcesToDeleteLater.push_back(NxAudioEngineMusicAudioSource(musicHandle, audioSource));
@@ -1059,7 +1059,7 @@ void NxAudioEngine::resetMusicVolume(double time)
 void NxAudioEngine::resetMusicVolume(int channel, double time)
 {
 	const NxAudioEngineMusic& music = _musics[channel];
-	const float volume = music.wantedMusicVolume * getMusicMasterVolume();
+	const float volume = music.wantedMusicVolume * getMusicMasterVolume() * _ffuMusicGain;
 
 	if (time > 0.0) {
 		time /= gamehacks.getCurrentSpeedhack();
