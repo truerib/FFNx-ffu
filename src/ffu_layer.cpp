@@ -72,14 +72,12 @@ namespace
     uint8_t *shared = nullptr;
     size_t sharedSize = 0;
     LARGE_INTEGER frequency;
-    // The crop read back each frame: the box round the airship, at the layer's full resolution. It follows the
-    // airship from the alpha of the last frames (the chase camera always looks at it, so it hardly moves), and grows
-    // (never shrinks, so a host rarely remakes its textures) whenever the airship reaches its edge: the Ragnarok was
-    // cut off by a fixed 1280 x 800 box.
+    // The box read back each frame round the airship, at the layer's full resolution: a fixed 2048 x 1600 (the
+    // Ragnarok at the default zoom fits; a 1280 x 800 box cut it in half), so nothing is remade in flight (see
+    // ffuLayerPrepare) and a host's textures keep their size. It follows the airship from the alpha of the last
+    // frames (the chase camera always looks at it, so it hardly moves).
     constexpr uint16_t MAX_CROP_WIDTH = 2048, MAX_CROP_HEIGHT = 1600;   // the shared file's room
-    constexpr uint16_t BASE_CROP_WIDTH = 1280, BASE_CROP_HEIGHT = 800;
-    uint16_t cropWidth = BASE_CROP_WIDTH, cropHeight = BASE_CROP_HEIGHT;
-    uint32_t smallFrames = 0;   // frames in a row the airship has filled under 60% of the box (it shrinks back after 240)
+    uint16_t cropWidth = MAX_CROP_WIDTH, cropHeight = MAX_CROP_HEIGHT;
     DWORD mapRetryAt = 0;       // the shared file couldn't be mapped: try again from then
     float cropCentre[2] = { -1.0f, -1.0f };
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
@@ -298,46 +296,51 @@ void Renderer::ffuLayerRender()
     backendProgram = currentProgram;
 }
 
-bool Renderer::ffuLayerBegin()
+// The layer's target and its read-back textures, made once, at a fixed box (MAX_CROP), from the first world-map
+// frame on: under Wine + MoltenVK the first touch of new GPU-visible memory stalls the whole game for about a second
+// (CLAUDE.md Rule 59), and remaking them whenever the box changed size left the layer stale for a second each time:
+// the host swapped in its copy, a flicker (2026-10-17).
+void Renderer::ffuLayerPrepare()
 {
-    if (!layerWanted() || ffuLayerActive) return false;
+    if (!layerWanted()) return;
     static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests)
     if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : 1; }
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
-    uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
-    bool pending = false;
-    for (const auto &slot : ffuLayerSlots) pending |= slot.pending != 0;
-    const bool resized = bgfx::isValid(ffuLayerFrameBuffer) && (readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight);
-    // A bigger box: no new reads until the ones in flight are in (three frames without a layer, once), then the
-    // read textures are made again. With a read always in flight, waiting for a free moment never came.
-    if (resized && pending) return false;
-    if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight
-        || readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight)
+    if (bgfx::isValid(ffuLayerFrameBuffer) && width == ffuLayerWidth && height == ffuLayerHeight) return;
+    for (const auto &slot : ffuLayerSlots) if (slot.pending) return;   // a resolution change: once the reads are in
+    const uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
+    if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
+    for (auto &slot : ffuLayerSlots)
+        for (auto &texture : slot.read) if (bgfx::isValid(texture)) bgfx::destroy(texture);
+    bgfx::TextureHandle targets[2] = {
+        bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
+        bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT),
+    };
+    ffuLayerFrameBuffer = bgfx::createFrameBuffer(2, targets, true);
+    for (auto &slot : ffuLayerSlots)
     {
-        if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
-        for (auto &slot : ffuLayerSlots)
-            for (auto &texture : slot.read) if (bgfx::isValid(texture)) bgfx::destroy(texture);
-        bgfx::TextureHandle targets[2] = {
-            bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
-            bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT),
-        };
-        ffuLayerFrameBuffer = bgfx::createFrameBuffer(2, targets, true);
-        for (auto &slot : ffuLayerSlots)
-        {
-            slot.read[0] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-            slot.read[1] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-            slot.colour.assign((size_t)readWidth * readHeight * 4, 0);
-            slot.depth.assign((size_t)readWidth * readHeight, 0.0f);
-            slot.pending = 0;
-        }
-        ffuLayerWidth = width;
-        ffuLayerHeight = height;
-        ffuLayerReadWidth = readWidth;
-        ffuLayerReadHeight = readHeight;
-        cropCentre[0] = cropCentre[1] = -1.0f;
-        ffnx_info("FFU layer: %ux%u target (1/%d of %ux%u), %ux%u crop read back, published as %s\n", width, height, scale,
-                  framebufferWidth, framebufferHeight, readWidth, readHeight, ownGame());
+        slot.read[0] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+        slot.read[1] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+        slot.colour.assign((size_t)readWidth * readHeight * 4, 0);
+        slot.depth.assign((size_t)readWidth * readHeight, 0.0f);
+        slot.pending = 0;
     }
+    ffuLayerWidth = width;
+    ffuLayerHeight = height;
+    ffuLayerReadWidth = readWidth;
+    ffuLayerReadHeight = readHeight;
+    cropCentre[0] = cropCentre[1] = -1.0f;
+    mapShared(sizeof(LayerHeader) + (size_t)readWidth * readHeight * 8);
+    ffnx_info("FFU layer: %ux%u target (1/%d of %ux%u), %ux%u box read back, published as %s\n", width, height, scale,
+              framebufferWidth, framebufferHeight, readWidth, readHeight, ownGame());
+}
+
+bool Renderer::ffuLayerBegin()
+{
+    if (!layerWanted() || ffuLayerActive) return false;
+    ffuLayerPrepare();
+    if (!bgfx::isValid(ffuLayerFrameBuffer)) return false;
+    const uint16_t width = ffuLayerWidth, height = ffuLayerHeight;
     ++backendViewId;
     ffuLayerViews[0] = backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
@@ -457,37 +460,11 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     {
         // Nothing in the box: the next boxes start again where the chase camera puts the airship.
         cropCentre[0] = cropCentre[1] = -1.0f;
-        smallFrames = 0;
     }
     else
     {
         cropCentre[0] = slot.cropX + (minX + maxX) * 0.5f;
         cropCentre[1] = slot.cropY + (minY + maxY) * 0.5f;
-        // Reaching an edge of the box that isn't the picture's: the next boxes are a quarter bigger.
-        const bool wide = (minX <= 2 && slot.cropX > 0) || (maxX >= ffuLayerReadWidth - 3 && slot.cropX + ffuLayerReadWidth < ffuLayerWidth);
-        const bool tall = (minY <= 2 && slot.cropY > 0) || (maxY >= ffuLayerReadHeight - 3 && slot.cropY + ffuLayerReadHeight < ffuLayerHeight);
-        const uint16_t grownWidth = wide ? (uint16_t)std::min<int>(MAX_CROP_WIDTH, (ffuLayerReadWidth * 5 / 4 + 63) / 64 * 64) : cropWidth;
-        const uint16_t grownHeight = tall ? (uint16_t)std::min<int>(MAX_CROP_HEIGHT, (ffuLayerReadHeight * 5 / 4 + 63) / 64 * 64) : cropHeight;
-        if (grownWidth > cropWidth || grownHeight > cropHeight)
-        {
-            cropWidth = std::max(cropWidth, grownWidth);
-            cropHeight = std::max(cropHeight, grownHeight);
-            smallFrames = 0;
-            ffnx_info("FFU layer: %s reaches the box's edge; boxes of %ux%u from now on\n", meta.id, cropWidth, cropHeight);
-        }
-        // Filling under 60% of a box bigger than the first one for 240 frames: back down to 1.4 times the airship
-        // (FF7 and FF8 are 32-bit, and the largest box costs ~300 MB of readback, upload and file view).
-        const int shownWidth = maxX - minX + 2, shownHeight = maxY - minY + 2;
-        const bool small = shownWidth < ffuLayerReadWidth * 0.6f && shownHeight < ffuLayerReadHeight * 0.6f
-                           && (cropWidth > BASE_CROP_WIDTH || cropHeight > BASE_CROP_HEIGHT);
-        smallFrames = small ? smallFrames + 1 : 0;
-        if (smallFrames >= 240)
-        {
-            cropWidth = (uint16_t)std::clamp<int>((int)(shownWidth * 1.4f + 63) / 64 * 64, BASE_CROP_WIDTH, cropWidth);
-            cropHeight = (uint16_t)std::clamp<int>((int)(shownHeight * 1.4f + 63) / 64 * 64, BASE_CROP_HEIGHT, cropHeight);
-            smallFrames = 0;
-            ffnx_info("FFU layer: %s is smaller again; boxes of %ux%u from now on\n", meta.id, cropWidth, cropHeight);
-        }
     }
     if (++published % 120 == 0)
     {

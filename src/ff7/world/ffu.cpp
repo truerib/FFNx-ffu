@@ -242,7 +242,8 @@ namespace ffu::ff7
         // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): FF7's own airship again, alone, at the end of the
         // frame, into the layer target another game composites (docs/crossover-design.md). Guests aren't in it:
         // they are their own games' to send.
-        if (newRenderer.ffuLayerWanted())
+        const Control *c = control();
+        if (newRenderer.ffuLayerWanted() && c && c->version >= 5 && c->publishLayer)
         {
             layerShips.clear();
             for (int i = 0; i < AIRSHIP_SLOTS; ++i)
@@ -287,6 +288,7 @@ namespace ffu::ff7
         // The game's models bend with the planet: say so here instead of relying on the rate the draw before
         // happened to leave (drawAirships sets 0 after itself; docs/world-map-audit.md #13).
         newRenderer.setSphericalWorldRate(1.0f);
+        newRenderer.ffuLayerPrepare();   // once: the live layer's target and reads, before any flight needs them
         ((void (*)(int))::ff7_externals.world_draw_all_3d_model_74C6B0)(param);
         if (hidden) *hidden = saved;
         if (player) *player = savedPlayer;

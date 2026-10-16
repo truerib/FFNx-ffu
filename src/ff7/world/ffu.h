@@ -47,6 +47,9 @@ namespace ffu::ff7
         // layer's depth scale, src/ffu_layer.cpp), 0 = FF7_GLOBE_RADIUS.
         int32_t hidePlayerModel;
         float unitsPerR;
+        // version 5: publishLayer = 1 while FF7 follows a flight of its own airship in another world (hidden): only then
+        // is the live layer read back (src/ffu_layer.cpp); flying in FF7 itself there is no one to send it to.
+        int32_t publishLayer;
     };
 
     // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models

@@ -38,7 +38,7 @@ namespace ffu::ff8world
         uint32_t magic;          // 'FFG1'
         uint32_t frame;
         float anchorX, anchorZ, cameraY, altitude;
-        float scale, radius, mode, reserved;
+        float scale, radius, mode, publishLayer;   // publishLayer: 1 while FF8 follows a flight of its own airship elsewhere
         float east[4], up[4], north[4];
         float space;                   // 0 in the atmosphere .. 1 in space (the sky is black)
         volatile int32_t meshActive;   // written by us: the DLL then skips its own far-side fallback

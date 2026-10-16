@@ -528,6 +528,7 @@ public:
     // radius for the flight camera this frame, and how its depth is written.
     enum : uint32_t { FFU_LAYER_DEPTH_FF7 = 0, FFU_LAYER_DEPTH_PACKED = 1, FFU_LAYER_DEPTH_FF8 = 2 };
     bool ffuLayerWanted();
+    void ffuLayerPrepare();   // every world-map frame: makes the layer's target and reads once, at a fixed size
     void ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, uint32_t depthFormat);
     // The compositor: true while a fresh layer from `id`'s own game shows exactly that model (the caller then
     // skips its copy); ffuLayerComposite draws it into the current view with this game's depth.
