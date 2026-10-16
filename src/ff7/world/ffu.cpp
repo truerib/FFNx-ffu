@@ -203,6 +203,18 @@ namespace ffu::ff7
             drawAirship(ship, model, &view);
         }
         if (!stateSet) return;
+        // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): the same ships again, alone, into the layer
+        // target another game composites (docs/crossover-design.md).
+        if (newRenderer.ffuLayerBegin())
+        {
+            for (int i = 0; i < AIRSHIP_SLOTS; ++i)
+            {
+                const Airship &ship = ships[i];
+                if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
+                if (ExternalMesh *model = airshipMesh(ship.id)) drawAirship(ship, model, &view);
+            }
+            newRenderer.ffuLayerEnd();
+        }
         newRenderer.discardAllBindings();
         newRenderer.setSphericalWorldRate(0.0f);
         struct matrix identity;

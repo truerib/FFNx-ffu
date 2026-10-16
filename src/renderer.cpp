@@ -1384,6 +1384,11 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
         // Set current view transform
         bgfx::setViewTransform(backendViewId, NULL, internalState.postprocessingProjMatrix);
     }
+    else if (ffuLayerActive)
+    {
+        // Final Fantasy Universe: the live layer's view and target are set up by ffuLayerBegin
+        bgfx::setViewTransform(backendViewId, NULL, internalState.backendProjMatrix);
+    }
     else
     {
         // Set view to render in the framebuffer
@@ -1583,7 +1588,8 @@ void Renderer::show()
         );
     }
 
-    bgfx::frame(doCaptureFrame ? BGFX_FRAME_DEBUG_CAPTURE : BGFX_FRAME_NONE);
+    ffuLastFrame = bgfx::frame(doCaptureFrame ? BGFX_FRAME_DEBUG_CAPTURE : BGFX_FRAME_NONE);
+    ffuLayerPoll();   // Final Fantasy Universe: a finished live-layer readback goes out
 
     if (trace_all || trace_renderer) ffnx_trace("Renderer::%s\n", __func__);
 

@@ -414,6 +414,16 @@ private:
     bgfx::TextureHandle shadowMapTexture = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle shadowMapFrameBuffer = BGFX_INVALID_HANDLE;
 
+    // Final Fantasy Universe: the live layer (ffu_layer.cpp, docs/crossover-design.md)
+    bgfx::FrameBufferHandle ffuLayerFrameBuffer = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle ffuLayerRead[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    uint16_t ffuLayerWidth = 0, ffuLayerHeight = 0;
+    bool ffuLayerActive = false;
+    uint32_t ffuLayerPending = 0, ffuLastFrame = 0;
+    std::vector<uint8_t> ffuLayerColour;
+    std::vector<float> ffuLayerDepth;
+    void ffuLayerPoll();
+
     bgfx::TextureHandle specularIblTexture = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle diffuseIblTexture = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle envBrdfTexture = BGFX_INVALID_HANDLE;
@@ -493,6 +503,10 @@ private:
 
 public:
     std::string currentRenderer;
+
+    // Final Fantasy Universe: the live layer (ffu_layer.cpp). Between Begin and End, draws go to the layer target.
+    bool ffuLayerBegin();
+    void ffuLayerEnd();
 
     // ---
 
