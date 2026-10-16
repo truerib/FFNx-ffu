@@ -33,6 +33,12 @@ namespace ffu::ff7
         float pitchMin, pitchMax;  // the world camera's pitch clamp (FFNx: -175, -95)
         int32_t highwindCeiling;   // the Highwind climbs while lower (FFNx: 32767 - 2000 - 50 x multiplier)
         int32_t hideModel;         // version 2: FF7 world model id not drawn (the airship a guest replaces), -1 none
+        // version 3: the bridge flies the camera (docs/space.md "Chase camera"): while cameraOverride is set,
+        // FFNx's world camera takes these exactly, with no easing: pitch (FFNx degrees, -90 = straight down,
+        // -180 = level), yaw (degrees, the value FFNx eases world_camera_rotation_y towards) and zoom (units
+        // from the view centre, which the bridge sets).
+        int32_t cameraOverride;
+        float cameraPitch, cameraYaw, cameraZoom;
     };
 
     // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models
@@ -69,6 +75,7 @@ namespace ffu::ff7
     float pitchMin(float fallback);
     float pitchMax(float fallback);
     int highwindCeiling(int fallback);
+    const Control *cameraOverride();   // the bridge's camera, or nullptr when FFNx's own camera runs
     // The shaders' FF7 globe state for this draw: [0] = (on the world map, cloud drift in radians,
     // 1 while an airship that flies with the camera is drawn, 0).
     void globeUniform(float out[8]);

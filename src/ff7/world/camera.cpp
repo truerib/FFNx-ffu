@@ -188,6 +188,18 @@ namespace ff7::world
         bx::Vec3 right = { 1, 0, 0 };
 
         float rotationY = 360.0f * static_cast<float>(*ff7_externals.world_camera_rotation_y_DFC474) / 4096.0f;
+
+        // Final Fantasy Universe: the bridge flies the camera (src/ff7/world/ffu.h, Control version 3). Exact,
+        // no easing; FFNx's own targets follow along, so its camera carries on smoothly when the override ends.
+        if (auto flight = ffu::ff7::cameraOverride())
+        {
+            camera.rotationOffset.x = camera.targetRotation.x = camera.localTargetRotation.x = flight->cameraPitch;
+            camera.rotationOffset.y = camera.targetRotation.y = camera.localTargetRotation.y = flight->cameraYaw;
+            rotationY = flight->cameraYaw;
+            *ff7_externals.world_camera_rotation_y_DFC474 = static_cast<int>(std::lround(flight->cameraYaw * 4096.0f / 360.0f));
+            *ff7_externals.world_camera_front_DFC484 = *ff7_externals.world_camera_rotation_y_DFC474;
+            zoomTarget = camera.zoomOffset = flight->cameraZoom;
+        }
         auto quaternionH = bx::fromAxisAngle(up, M_PI * rotationY / 180.0f);
         auto quaternionV = bx::fromAxisAngle(right, M_PI * camera.rotationOffset.x / 180.0f);
 
@@ -200,9 +212,11 @@ namespace ff7::world
         bx::mtxFromQuaternion(rotMat, quaternion);
 
 
-        camera.zoomOffset = (1.0f - t) * camera.zoomOffset + t * zoomTarget;
-
-        camera.zoomOffset = std::min(maxZoomDist, std::max(camera.minZoomDist, camera.zoomOffset));
+        if (!ffu::ff7::cameraOverride())
+        {
+            camera.zoomOffset = (1.0f - t) * camera.zoomOffset + t * zoomTarget;
+            camera.zoomOffset = std::min(maxZoomDist, std::max(camera.minZoomDist, camera.zoomOffset));
+        }
 
         if (world_map_type == SNOWSTORM) camera.zoomOffset = 10000.0;
 

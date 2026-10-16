@@ -59,6 +59,7 @@ namespace ffu::ff7
     float pitchMin(float fallback) { auto c = control(); return c ? c->pitchMin : fallback; }
     float pitchMax(float fallback) { auto c = control(); return c ? c->pitchMax : fallback; }
     int highwindCeiling(int fallback) { auto c = control(); return c && c->highwindCeiling > 0 ? c->highwindCeiling : fallback; }
+    const Control *cameraOverride() { auto c = control(); return c && c->version >= 3 && c->cameraOverride ? c : nullptr; }
 
     static void publish()
     {
