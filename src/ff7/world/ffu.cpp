@@ -228,6 +228,9 @@ namespace ffu::ff7
         uint32_t *hidden = c && c->version >= 2 && c->hideModel >= 0 ? modelDrawFlag(c->hideModel) : nullptr;
         const uint32_t saved = hidden ? *hidden : 0;
         if (hidden) *hidden = 0;
+        // The game's models bend with the planet: say so here instead of relying on the rate the draw before
+        // happened to leave (drawAirships sets 0 after itself; docs/world-map-audit.md #13).
+        newRenderer.setSphericalWorldRate(1.0f);
         ((void (*)(int))::ff7_externals.world_draw_all_3d_model_74C6B0)(param);
         if (hidden) *hidden = saved;
         drawAirships();
