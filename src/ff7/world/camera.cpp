@@ -210,6 +210,9 @@ namespace ff7::world
 
         float rotMat[16];
         bx::mtxFromQuaternion(rotMat, quaternion);
+        if (auto flight = ffu::ff7::cameraOverride())
+            for (int row = 0; row < 3; ++row)
+                for (int column = 0; column < 3; ++column) rotMat[row * 4 + column] = flight->cameraBasis[row * 3 + column];
 
 
         if (!ffu::ff7::cameraOverride())
