@@ -45,10 +45,9 @@ namespace
 
     uint8_t *shared = nullptr;
     size_t sharedSize = 0;
-    LARGE_INTEGER frequency, requested;
+    LARGE_INTEGER frequency;
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
-    uint32_t framesWaitedTotal = 0, published = 0, requestedFrame = 0;
-    float requestedDepths[2] = {0.0f, 0.0f};   // the game's depth at 30,000 and 60,000 units when requested
+    uint32_t framesWaitedTotal = 0, published = 0, skipped = 0;
 
     // FFNx.ffu7.sh GameDepthAt on the CPU: the shader's mul(mul(viewport, projection), v) on FF7's row-major
     // matrices is the row vector (0, 0, w, 1) * projection * viewport.
@@ -98,6 +97,7 @@ void Renderer::ffuLayerCapture(void (*draw)())
 {
     if (!layerWanted()) return;
     ffuLayerState = internalState;
+    ffuLayerProgram = backendProgram;   // FFNx's post-processing switches it before the replay
     ffuLayerDraw = draw;
 }
 
@@ -107,7 +107,9 @@ void Renderer::ffuLayerRender()
     void (*draw)() = ffuLayerDraw;
     ffuLayerDraw = nullptr;
     RendererState current = internalState;
+    const RendererProgram currentProgram = backendProgram;
     internalState = ffuLayerState;
+    backendProgram = ffuLayerProgram;
     if (ffuLayerBegin())
     {
         draw();
@@ -115,6 +117,7 @@ void Renderer::ffuLayerRender()
     }
     discardAllBindings();
     internalState = current;
+    backendProgram = currentProgram;
 }
 
 bool Renderer::ffuLayerBegin()
@@ -124,19 +127,23 @@ bool Renderer::ffuLayerBegin()
     if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight)
     {
         if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
-        for (auto &texture : ffuLayerRead) if (bgfx::isValid(texture)) bgfx::destroy(texture);
+        for (auto &slot : ffuLayerSlots)
+            for (auto &texture : slot.read) if (bgfx::isValid(texture)) bgfx::destroy(texture);
         bgfx::TextureHandle targets[2] = {
             bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP),
             bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT),
         };
         ffuLayerFrameBuffer = bgfx::createFrameBuffer(2, targets, true);
-        ffuLayerRead[0] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-        ffuLayerRead[1] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-        ffuLayerColour.assign((size_t)width * height * 4, 0);
-        ffuLayerDepth.assign((size_t)width * height, 0.0f);
+        for (auto &slot : ffuLayerSlots)
+        {
+            slot.read[0] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+            slot.read[1] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+            slot.colour.assign((size_t)width * height * 4, 0);
+            slot.depth.assign((size_t)width * height, 0.0f);
+            slot.pending = 0;
+        }
         ffuLayerWidth = width;
         ffuLayerHeight = height;
-        ffuLayerPending = 0;
         ffnx_info("FFU layer: %ux%u target (half of %ux%u)\n", width, height, framebufferWidth, framebufferHeight);
     }
     ++backendViewId;
@@ -157,18 +164,20 @@ void Renderer::ffuLayerEnd()
     ++backendViewId;
     ffuLayerViews[1] = backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
-    if (ffuLayerPending == 0)   // one readback in flight at a time
-    {
-        bgfx::blit(backendViewId, {.handle = ffuLayerRead[0]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0)});
-        bgfx::blit(backendViewId, {.handle = ffuLayerRead[1]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1)});
-        bgfx::touch(backendViewId);
-        ffuLayerPending = bgfx::read({.handle = ffuLayerRead[0]}, ffuLayerColour.data());
-        bgfx::read({.handle = ffuLayerRead[1]}, ffuLayerDepth.data());
-        QueryPerformanceCounter(&requested);
-        requestedFrame = ffuLastFrame;
-        requestedDepths[0] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 30000.0f);
-        requestedDepths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
-    }
+    FfuLayerSlot *slot = nullptr;
+    for (auto &candidate : ffuLayerSlots) if (candidate.pending == 0) { slot = &candidate; break; }
+    if (!slot) { ++skipped; return; }   // three already in flight
+    bgfx::blit(backendViewId, {.handle = slot->read[0]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0)});
+    bgfx::blit(backendViewId, {.handle = slot->read[1]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1)});
+    bgfx::touch(backendViewId);
+    slot->pending = bgfx::read({.handle = slot->read[0]}, slot->colour.data());
+    bgfx::read({.handle = slot->read[1]}, slot->depth.data());
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    slot->requestedAt = now.QuadPart;
+    slot->requestedFrame = ffuLastFrame;
+    slot->depths[0] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 30000.0f);
+    slot->depths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
 }
 
 void Renderer::ffuLayerPoll()
@@ -179,7 +188,19 @@ void Renderer::ffuLayerPoll()
         if (view) bgfx::resetView(view);
         view = 0;
     }
-    if (ffuLayerPending == 0 || ffuLastFrame < ffuLayerPending) return;
+    for (;;)   // every finished readback, oldest first
+    {
+        FfuLayerSlot *slot = nullptr;
+        for (auto &candidate : ffuLayerSlots)
+            if (candidate.pending && candidate.pending <= ffuLastFrame && (!slot || candidate.pending < slot->pending)) slot = &candidate;
+        if (!slot) return;
+        publishLayer(*slot);
+        slot->pending = 0;
+    }
+}
+
+void Renderer::publishLayer(FfuLayerSlot &slot)
+{
     LARGE_INTEGER ready, done;
     QueryPerformanceCounter(&ready);
     const size_t pixels = (size_t)ffuLayerWidth * ffuLayerHeight;
@@ -194,35 +215,35 @@ void Renderer::ffuLayerPoll()
         header->height = ffuLayerHeight;
         header->fullWidth = framebufferWidth;
         header->fullHeight = framebufferHeight;
-        header->frame = ffuLayerPending;
+        header->frame = slot.pending;
         header->frequency = frequency.QuadPart;
         // To turn the layer's depth (WorldDepth, FFNx.ffu7.sh) back into view distance: the game's depth at
         // 30,000 and 60,000 units and which end of the range is far.
-        header->reserved[0] = requestedDepths[0];
-        header->reserved[1] = requestedDepths[1];
-        header->reserved[2] = requestedDepths[1] < requestedDepths[0] ? 0.0f : 1.0f;
+        header->reserved[0] = slot.depths[0];
+        header->reserved[1] = slot.depths[1];
+        header->reserved[2] = slot.depths[1] < slot.depths[0] ? 0.0f : 1.0f;
         header->reserved[3] = 0.0f;
-        ::memcpy(base + sizeof(LayerHeader), ffuLayerColour.data(), pixels * 4);
-        ::memcpy(base + sizeof(LayerHeader) + pixels * 4, ffuLayerDepth.data(), pixels * 4);
+        ::memcpy(base + sizeof(LayerHeader), slot.colour.data(), pixels * 4);
+        ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
         header->stamp = done.QuadPart;
         InterlockedIncrement(&header->seq);   // even: published
     }
     else QueryPerformanceCounter(&done);
-    const double readback = (ready.QuadPart - requested.QuadPart) * 1000.0 / frequency.QuadPart;
+    const double readback = (ready.QuadPart - slot.requestedAt) * 1000.0 / frequency.QuadPart;
     const double publish = (done.QuadPart - ready.QuadPart) * 1000.0 / frequency.QuadPart;
     readbackTotal += readback; if (readback > readbackMax) readbackMax = readback;
     publishTotal += publish; if (publish > publishMax) publishMax = publish;
-    framesWaitedTotal += ffuLastFrame - requestedFrame;
+    framesWaitedTotal += ffuLastFrame - slot.requestedFrame;
     if (++published % 120 == 0)
     {
         size_t covered = 0;
-        for (size_t i = 3; i < ffuLayerColour.size(); i += 4) covered += ffuLayerColour[i] != 0;
-        ffnx_info("FFU layer: %u readbacks of %ux%u: request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); last frame %.1f%% covered; depth at 30k/60k %.6f/%.6f\n",
+        for (size_t i = 3; i < slot.colour.size(); i += 4) covered += slot.colour[i] != 0;
+        ffnx_info("FFU layer: %u readbacks of %ux%u: request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); %u skipped (ring full); last frame %.1f%% covered; depth at 30k/60k %.6f/%.6f\n",
                   published, ffuLayerWidth, ffuLayerHeight, readbackTotal / 120, readbackMax, framesWaitedTotal / 120.0,
-                  publishTotal / 120, publishMax, 100.0 * covered / pixels, requestedDepths[0], requestedDepths[1]);
+                  publishTotal / 120, publishMax, skipped, 100.0 * covered / pixels, slot.depths[0], slot.depths[1]);
         readbackTotal = readbackMax = publishTotal = publishMax = 0;
         framesWaitedTotal = 0;
+        skipped = 0;
     }
-    ffuLayerPending = 0;
 }

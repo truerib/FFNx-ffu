@@ -416,19 +416,29 @@ private:
 
     // Final Fantasy Universe: the live layer (ffu_layer.cpp, docs/crossover-design.md)
     bgfx::FrameBufferHandle ffuLayerFrameBuffer = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle ffuLayerRead[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    struct FfuLayerSlot                     // one readback in flight: up to three, so one finishes every frame
+    {
+        bgfx::TextureHandle read[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };   // colour, depth
+        uint32_t pending = 0;               // the frame its data is ready at; 0 = free
+        uint32_t requestedFrame = 0;
+        int64_t requestedAt = 0;            // QueryPerformanceCounter
+        float depths[2] = { 0.0f, 0.0f };   // the game's depth at 30,000 and 60,000 units then
+        std::vector<uint8_t> colour;
+        std::vector<float> depth;
+    };
+    FfuLayerSlot ffuLayerSlots[3];
     uint16_t ffuLayerWidth = 0, ffuLayerHeight = 0;
     bool ffuLayerActive = false;
-    uint32_t ffuLayerPending = 0, ffuLastFrame = 0;
-    std::vector<uint8_t> ffuLayerColour;
-    std::vector<float> ffuLayerDepth;
+    uint32_t ffuLastFrame = 0;
     RendererState ffuLayerState;            // the state the captured draws were made with
+    RendererProgram ffuLayerProgram = RendererProgram::SMOOTH;   // ... and the program (held outside the state)
     void (*ffuLayerDraw)() = nullptr;       // draws them again (ffuLayerCapture)
     bgfx::ViewId ffuLayerViews[2] = { 0, 0 };
     bool ffuLayerBegin();
     void ffuLayerEnd();
     void ffuLayerRender();
     void ffuLayerPoll();
+    void publishLayer(FfuLayerSlot &slot);
 
     bgfx::TextureHandle specularIblTexture = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle diffuseIblTexture = BGFX_INVALID_HANDLE;
