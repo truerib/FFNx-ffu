@@ -289,7 +289,9 @@ bool Renderer::ffuLayerBegin()
     bool pending = false;
     for (const auto &slot : ffuLayerSlots) pending |= slot.pending != 0;
     const bool resized = bgfx::isValid(ffuLayerFrameBuffer) && (readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight);
-    if (resized && pending) { readWidth = ffuLayerReadWidth; readHeight = ffuLayerReadHeight; }   // once the reads in flight are in
+    // A bigger box: no new reads until the ones in flight are in (three frames without a layer, once), then the
+    // read textures are made again. With a read always in flight, waiting for a free moment never came.
+    if (resized && pending) return false;
     if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight
         || readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight)
     {
