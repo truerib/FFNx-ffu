@@ -524,6 +524,7 @@ namespace ffu::ff8world
         drawTranslucentTerrain();
         if (cam.hasGlobe) drawCloudShell();
         if (cam.hasGlobe && !sphere.shapes.empty() && cam.globe.space > 0.0f) drawAtmosphere();
+        drawOtherPlanetGlows();
         newRenderer.discardAllBindings();
         newRenderer.setFF8WorldMesh(false);
         gl_load_state(&saved);
@@ -605,22 +606,6 @@ namespace ffu::ff8world
         {
             float globe[24];
             fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
-            // Its atmosphere's glow first, as its own game draws it (only the limb shows: the opaque planet
-            // drawn next covers the disc), so nothing appears at the hand-over.
-            globe[6] = 9.0f;
-            newRenderer.setFF8WorldMesh(true, globe, 4.0f);
-            newRenderer.isTexture(false);
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
-            newRenderer.doDepthWrite(false);
-            newRenderer.setCommonUniforms();
-            newRenderer.setCullMode(RendererCullMode::DISABLED);
-            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
-            sphere.bindField3dIndexBuffer(0, shape.indices.size());
-            newRenderer.draw(true, true, true);
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
-            newRenderer.doDepthWrite(true);
-            newRenderer.isTexture(true);
-            globe[6] = 4.0f;
             newRenderer.setFF8WorldMesh(true, globe);
             newRenderer.setCommonUniforms();
             newRenderer.setCullMode(RendererCullMode::DISABLED);
@@ -644,6 +629,44 @@ namespace ffu::ff8world
                 newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
                 newRenderer.doDepthWrite(true);
             }
+        }
+    }
+
+    // The other planets' atmosphere glow, as their own games draw it, so nothing appears at a hand-over. After
+    // FF8's own (black) space sky, which would cover it otherwise: the far half of a 1.3 R shell, additive, depth
+    // tested, so the planet in front hides it over the disc and only the limb glows.
+    void Renderer::drawOtherPlanetGlows()
+    {
+        if (otherPlanets.empty() || sphere.shapes.empty() || !cam.hasGlobe || cam.globe.space < 0.98f) return;
+        const Shape &shape = sphere.shapes[0];
+        struct matrix identity, projection;
+        identity_matrix(&identity);
+        buildProjection(projection);
+        newRenderer.setInterpolationQualifier(SMOOTH);
+        newRenderer.setPrimitiveType();
+        newRenderer.isTLVertex(false);
+        newRenderer.isTexture(false);
+        newRenderer.isExternalTexture(false);
+        newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
+        newRenderer.doDepthTest(true);
+        newRenderer.doDepthWrite(false);
+        newRenderer.doScissorTest(false);
+        newRenderer.setSphericalWorldRate(0.0f);
+        newRenderer.setFogEnabled(false);
+        newRenderer.setD3DViweport(&identity);
+        newRenderer.setD3DProjectionRaw(&projection);
+        newRenderer.setWorldViewMatrix(&identity, false);
+        for (const auto &planet : otherPlanets)
+        {
+            float globe[24];
+            fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
+            globe[6] = 9.0f;
+            newRenderer.setFF8WorldMesh(true, globe, 4.0f);
+            newRenderer.setCommonUniforms();
+            newRenderer.setCullMode(RendererCullMode::DISABLED);
+            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+            sphere.bindField3dIndexBuffer(0, shape.indices.size());
+            newRenderer.draw(true, true, true);
         }
     }
 

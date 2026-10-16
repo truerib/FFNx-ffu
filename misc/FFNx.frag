@@ -133,7 +133,9 @@ void main()
     if (WMFlags.z > 3.5)   // another planet's atmosphere (docs/space.md "Other planets"): the same glow as its own game draws
     {
         vec3 centre = FF8OtherPlanetCentre();
-        if (dot(v_position0.xyz - centre, v_position0.xyz) > 0.0) discard;   // the shell's far side
+        // The shell's FAR half: drawn after FF8's sky with depth test, the planet in front hides it over the
+        // disc, so only the limb glows (as each game draws its own planet from space).
+        if (dot(v_position0.xyz - centre, v_position0.xyz) < 0.0) discard;
         gl_FragColor = vec4(FF8AtmosphereOf(normalize(v_position0.xyz), centre, ff8Globe[5].w * ff8Globe[1].x), 1.0);
         return;
     }

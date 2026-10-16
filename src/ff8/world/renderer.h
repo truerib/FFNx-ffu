@@ -99,6 +99,7 @@ namespace ffu::ff8world
         void buildPolarCaps();
         void loadOtherPlanets();
         void buildUnitSphere();
+        void drawOtherPlanetGlows();
         void loadClouds();
         void drawCloudShell();
         float cloudDrift() const;
