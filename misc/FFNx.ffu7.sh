@@ -655,4 +655,18 @@ float WorldDepth(float w, float gameDepth, float atLimit, float farEnd)
 	return mix(0.5, farEnd, saturate(t) * 0.999);
 }
 
+// FF7's own 2D world objects (the Midgar Zolom, dust, splashes and wakes: world_draw_snake_texture_75D544,
+// world_submit_draw_effects_75C283) come projected by FF7 itself, with its own depth (0 near, 1 far, one value
+// per quad), while every 3D draw writes WorldDepth: with the game's depth they lost to the terrain everywhere
+// (docs/world-map-audit.md #1). They get the depth a 3D pixel at the same view distance gets. A perspective
+// depth is a + b / w; a and b come from two samples of FFNx's projection, whose convention may be reversed
+// (farEnd 0, as here). Returns the quad's depth in FFNx's convention (.x) and its view distance (.y).
+vec2 Ff7WorldQuadDepth(float tlDepth, float atLimit, float further)
+{
+	float depth = further < atLimit ? 1.0 - tlDepth : tlDepth;
+	float b = 2.0 * FFU_DEPTH_NEAR_LIMIT * (atLimit - further);
+	float a = atLimit - b / FFU_DEPTH_NEAR_LIMIT;
+	return vec2(depth, b / (depth - a));
+}
+
 #define MAX_BONE_MATRICES 128

@@ -90,7 +90,8 @@ void NxAudioEngine::ffuFrame()
         if (lastRestart != 0 && now - lastRestart < RESTART_INTERVAL_MS) return;
         lastRestart = now;
         int result = ma_device_start(&SoLoud::gDevice);
-        InterlockedIncrement(&ffu_audio_restarts);
-        ffnx_info("FFU audio: the device had stopped (a freeze over 5 s); restarted, result %d\n", result);
+        LONG restarts = InterlockedIncrement(&ffu_audio_restarts);
+        if (result == 0 || restarts <= 5 || restarts % 100 == 0)   // a device that keeps failing: not every 0.5 s
+            ffnx_info("FFU audio: the device had stopped (a freeze over 5 s); restart %ld, result %d\n", restarts, result);
     }
 }

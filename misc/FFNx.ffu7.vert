@@ -104,6 +104,20 @@ void main()
             float further = GameDepthAt(d3dViewport, d3dProjection, 2.0 * FFU_DEPTH_NEAR_LIMIT);
             pos.z = (further < atLimit ? 0.0 : 1.0) * pos.w;
         }
+#ifndef FFU_NO_QUAD_DEPTH
+        else if (a_position.z > 0.02)
+        {
+            // FF7's own 2D world objects (Ff7WorldQuadDepth): the terrain's depth at their distance.
+            float atLimit = GameDepthAt(d3dViewport, d3dProjection, FFU_DEPTH_NEAR_LIMIT);
+            float further = GameDepthAt(d3dViewport, d3dProjection, 2.0 * FFU_DEPTH_NEAR_LIMIT);
+            vec2 quad = Ff7WorldQuadDepth(a_position.z, atLimit, further);
+            if (quad.y > 0.0)
+            {
+                pos.z = quad.x * pos.w;
+                v_ffu = vec4(quad.y, 1.0, atLimit, further < atLimit ? 0.0 : 1.0);
+            }
+        }
+#endif
 #endif
     }
     else
