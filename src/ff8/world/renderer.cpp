@@ -341,6 +341,11 @@ namespace ffu::ff8world
         rotation._44 = 1.0f;
 
         lens._11 = 2.0f * scaleX * cam.H / width;
+        // FF8's 320x224 picture is stretched to the 16:10 frame (scaleX / scaleY ~ 1.08 wider). In space every
+        // game must show the same picture (docs/space.md "Lens"), so the fork's own drawing (world, planets,
+        // glow, airships) gets square pixels there, blended in with FF8's space share; on the ground FF8 keeps
+        // its own look (its models are drawn by FF8 with the stretch).
+        if (cam.hasGlobe && scaleX > 0.0f) lens._11 *= 1.0f + cam.globe.space * (scaleY / scaleX - 1.0f);
         lens._31 = 2.0f * (offsetX + scaleX * cam.ofx - left) / width - 1.0f;
         lens._22 = -2.0f * scaleY * cam.H / height;
         lens._32 = 1.0f - 2.0f * (offsetY + scaleY * cam.ofy) / height;
