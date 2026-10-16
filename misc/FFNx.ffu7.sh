@@ -366,9 +366,9 @@ vec4 OtherPlanetSquare(vec2 corner, vec3 directionV, float distance, mat4 viewpo
 	vec3 side = normalize(abs(directionV.y) < 0.99 ? cross(directionV, vec3(0.0, 1.0, 0.0)) : cross(directionV, vec3(1.0, 0.0, 0.0)));
 	vec3 other = cross(side, directionV);
 	// A square perpendicular to the view of the centre, at depth 50,000 (the depth written per pixel is
-	// the true one), just larger than the disc: half-angle asin(1 / distance).
+	// the true one), round the disc and its air: half-angle asin(1.3 / distance), as FF8's 1.3 R shell.
 	float depth = 50000.0;
-	float halfSize = depth * tan(asin(min(1.0 / distance, 0.999))) * 1.02;
+	float halfSize = depth * tan(asin(min(1.3 / distance, 0.999))) * 1.02;
 	vec3 view = directionV * depth + (side * corner.x + other * corner.y) * halfSize;
 	vec3 world = mul(invViewM, vec4(view, 0.0)).xyz;
 	solarRay = east * world.x + up * world.y + south * world.z;

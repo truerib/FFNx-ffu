@@ -273,13 +273,28 @@ void main()
         }
         else
         {
-            if (hitsFF7 > 0.0 || t <= 0.0) discard;   // FF7's own planet (its terrain draws its clouds) or nothing
-            float density = slot < 0.5 ? planetClouds.g : planetClouds.b;
+            if (hitsFF7 > 0.0) discard;   // FF7's own planet is in front (its terrain draws its clouds)
             // Seen through FF7's air like the stars: the blue transmittance along the ray.
             float fade = exp(-AirToSpace(cameraPos, dot(ray, up)) * FFU_SCATTER_R.b * 3.0);
             if (fade < 0.002) discard;
-            light = mix(planetMap, FFU_CLOUD_COLOUR, density) * fade;
-            depthT = t;
+            if (t > 0.0)
+            {
+                float density = slot < 0.5 ? planetClouds.g : planetClouds.b;
+                light = mix(planetMap, FFU_CLOUD_COLOUR, density) * fade;
+                depthT = t;
+            }
+            else
+            {
+                // Round its limb, the planet's own air as its game draws it from space (docs/space.md "Other
+                // planets"): the same closed-form Chapman glow as FF7's own limb, from this far away.
+                float distanceC = length(v_normal0);
+                float heightO = distanceC - 1.0;
+                float H = mix(FFU_SCALE_HEIGHT_R, FFU_SPACE_SCALE_HEIGHT_R, smoothstep(FFU_THIN_FROM_R, FFU_THIN_TO_R, heightO));
+                float tau = min(AirAlongRay(heightO, dot(ray, -v_normal0 / distanceC), H), FFU_DEPTH_CLAMP_R);
+                light = (1.0 - exp(-tau * FFU_SCATTER_R)) * FFU_SKY_TINT * fade;
+                if (max(light.r, max(light.g, light.b)) < 0.001) discard;
+                depthT = max(dot(ray, v_normal0), 0.0);   // the ray's closest approach to the planet
+            }
         }
         color = vec4(light * v_ffu.x, 1.0);
         // Solar distances are in radii of the planet as drawn (R_now game units each).
