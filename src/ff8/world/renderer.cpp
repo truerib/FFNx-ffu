@@ -324,7 +324,7 @@ namespace ffu::ff8world
     // FF8's projection with its rotation folded in (docs/ff8-3d-world-renderer.md 1.7/1.8): FF8's own
     // 1/8-pixel PS1 screen, mapped by the live ssigpu scale/offset into FFNx's TL space (wide viewport
     // included), then FFNx's orthographic matrix. Depth is replaced in the shader (FF8Depth).
-    void Renderer::buildProjection(struct matrix &projection) const
+    void Renderer::buildProjection(struct matrix &projection, bool squarePixels) const
     {
         const float scaleX = *(const float *)SSIGPU_SCALE_X * 8.0f, scaleY = *(const float *)SSIGPU_SCALE_Y * 8.0f;
         const float offsetX = *(const float *)SSIGPU_OFFSET_X, offsetY = *(const float *)SSIGPU_OFFSET_Y;
@@ -345,7 +345,9 @@ namespace ffu::ff8world
         // game must show the same picture (docs/space.md "Lens"), so the fork's own drawing (world, planets,
         // glow, airships) gets square pixels there, blended in with FF8's space share; on the ground FF8 keeps
         // its own look (its models are drawn by FF8 with the stretch).
-        if (cam.hasGlobe && scaleX > 0.0f) lens._11 *= 1.0f + cam.globe.space * (scaleY / scaleX - 1.0f);
+        // The live layer is always square: it is laid into another game's picture (src/ffu_layer.cpp).
+        const float squareShare = squarePixels ? 1.0f : cam.globe.space;
+        if (cam.hasGlobe && scaleX > 0.0f) lens._11 *= 1.0f + squareShare * (scaleY / scaleX - 1.0f);
         lens._31 = 2.0f * (offsetX + scaleX * cam.ofx - left) / width - 1.0f;
         lens._22 = -2.0f * scaleY * cam.H / height;
         lens._32 = 1.0f - 2.0f * (offsetY + scaleY * cam.ofy) / height;
@@ -696,47 +698,79 @@ namespace ffu::ff8world
 
     // Airships drawn from their real models (AirshipPose). They climb with the camera, so the shader only
     // applies the virtual scale (the camera's climb leaves them where they are relative to it).
+    void Renderer::drawAirship(const AirshipPose &pose, ExternalMesh *model)
+    {
+        struct matrix place = {};
+        for (int row = 0; row < 3; ++row)
+        {
+            for (int column = 0; column < 3; ++column) place.m[column][row] = pose.model[row * 4 + column];   // row vectors
+            place.m[3][row] = pose.model[row * 4 + 3];
+        }
+        place._44 = 1.0f;
+        float globe[24];
+        fillGlobeUniform(globe, Part::World);
+        globe[6] = 5.0f;
+        newRenderer.setWorldViewMatrix(&place, false);
+        newRenderer.setFF8WorldMesh(true, globe);
+        newRenderer.isTexture(true);
+        newRenderer.setCommonUniforms();
+        uint32_t vertexOffset = 0, indexOffset = 0;
+        for (const auto &shape : model->shapes)
+        {
+            if (shape.pMaterial && !shape.pMaterial->baseColorTexHandles.empty()
+                && bgfx::isValid(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex]))
+            {
+                // No culling: the airship glTFs keep FF8's winding reversed, and FFNx's FRONT mode is broken
+                // (a missing break sets both cull bits).
+                newRenderer.setCullMode(RendererCullMode::DISABLED);
+                model->bindField3dVertexBuffer(vertexOffset, shape.vertices.size());
+                model->bindField3dIndexBuffer(indexOffset, shape.indices.size());
+                newRenderer.useTexture(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex].idx, RendererTextureSlot::TEX_Y);
+                newRenderer.bindTextures();
+                newRenderer.draw(true, true, true);
+            }
+            vertexOffset += shape.vertices.size();
+            indexOffset += shape.indices.size();
+        }
+    }
+
+    // FF8's own airships again, alone, square, at the end of the frame (src/ffu_layer.cpp).
+    void Renderer::drawLayerShips()
+    {
+        struct matrix projection;
+        renderer.buildProjection(projection, true);
+        newRenderer.setD3DProjectionRaw(&projection);
+        for (const auto &pose : renderer.layerPoses)
+            if (ExternalMesh *model = renderer.airshipMesh(pose.id)) renderer.drawAirship(pose, model);
+        renderer.layerPoses.clear();
+        struct matrix identity;
+        identity_matrix(&identity);
+        newRenderer.setWorldViewMatrix(&identity, false);
+    }
+
+    // Every pose the proxy filled: FF8's own airship, a guest, Squall as an NPC, a visitor's stand-in. A guest
+    // airship whose own game is sending its live layer isn't drawn here: that layer is composited instead
+    // (src/ffu_layer.cpp, Rule 64). FF8's own airships also go into FF8's layer when FFU_FF8_LAYER=1.
     void Renderer::drawAirships()
     {
         if (!cam.hasGlobe) return;
+        // FF8 units per planet radius as drawn: the globe's radius at the camera, times the climb's virtual scale.
+        const float unitsPerR = cam.globe.radius * cam.globe.scale;
+        std::vector<const char *> live;
+        layerPoses.clear();
         for (const auto &pose : cam.airships)
         {
             if (!pose.visible || !pose.id[0]) continue;
+            const bool own = !strncmp(pose.id, "ff8_", 4);
+            if (!own && newRenderer.ffuLayerLive(pose.id)) { live.push_back(pose.id); continue; }
             ExternalMesh *model = airshipMesh(pose.id);
             if (!model) continue;
-            struct matrix place = {};
-            for (int row = 0; row < 3; ++row)
-            {
-                for (int column = 0; column < 3; ++column) place.m[column][row] = pose.model[row * 4 + column];   // row vectors
-                place.m[3][row] = pose.model[row * 4 + 3];
-            }
-            place._44 = 1.0f;
-            float globe[24];
-            fillGlobeUniform(globe, Part::World);
-            globe[6] = 5.0f;
-            newRenderer.setWorldViewMatrix(&place, false);
-            newRenderer.setFF8WorldMesh(true, globe);
-            newRenderer.isTexture(true);
-            newRenderer.setCommonUniforms();
-            uint32_t vertexOffset = 0, indexOffset = 0;
-            for (const auto &shape : model->shapes)
-            {
-                if (shape.pMaterial && !shape.pMaterial->baseColorTexHandles.empty()
-                    && bgfx::isValid(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex]))
-                {
-                    // No culling: the airship glTFs keep FF8's winding reversed, and FFNx's FRONT mode is broken
-                    // (a missing break sets both cull bits).
-                    newRenderer.setCullMode(RendererCullMode::DISABLED);
-                    model->bindField3dVertexBuffer(vertexOffset, shape.vertices.size());
-                    model->bindField3dIndexBuffer(indexOffset, shape.indices.size());
-                    newRenderer.useTexture(shape.pMaterial->baseColorTexHandles[shape.pMaterial->texIndex].idx, RendererTextureSlot::TEX_Y);
-                    newRenderer.bindTextures();
-                    newRenderer.draw(true, true, true);
-                }
-                vertexOffset += shape.vertices.size();
-                indexOffset += shape.indices.size();
-            }
+            drawAirship(pose, model);
+            // Characters (Squall as an NPC) aren't airships: the layer carries the flown ship only.
+            if (own && strcmp(pose.id, "ff8_squall") && newRenderer.ffuLayerWanted()) layerPoses.push_back(pose);
         }
+        for (const char *id : live) newRenderer.ffuLayerComposite(id, ::Renderer::FFU_LAYER_DEPTH_FF8, unitsPerR);
+        if (!layerPoses.empty()) newRenderer.ffuLayerCapture(&Renderer::drawLayerShips, layerPoses[0].id, unitsPerR, ::Renderer::FFU_LAYER_DEPTH_FF8);
         struct matrix identity;
         identity_matrix(&identity);
         newRenderer.setWorldViewMatrix(&identity, false);

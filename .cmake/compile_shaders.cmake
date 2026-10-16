@@ -11,8 +11,8 @@ foreach(shader IN LISTS FFNX_SHADERS)
         set(platform_flags ${BGFX_SHADERC_DIRECT3D_FLAGS})
       endif()
 
-      # Final Fantasy Universe: FF7's globe shaders are used (and verified) with Vulkan only (src/renderer.cpp).
-      if(shader MATCHES "\\.ffu7" AND NOT platform STREQUAL "vk")
+      # Final Fantasy Universe: its shaders (FF7's globe, the live layer) are used (and verified) with Vulkan only.
+      if(shader MATCHES "\\.ffu" AND NOT platform STREQUAL "vk")
         continue()
       endif()
 

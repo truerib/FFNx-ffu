@@ -93,7 +93,7 @@ namespace ffu::ff8world
         bool replacesTerrain() const { return loaded && !mesh.shapes.empty(); }
 
     private:
-        void buildProjection(struct matrix& projection) const;
+        void buildProjection(struct matrix& projection, bool squarePixels = false) const;
         enum class Part { World, PolarCap, OtherPlanet };
         void fillGlobeUniform(float out[24], Part part, const float* planetOffset = nullptr) const;
         void buildPolarCaps();
@@ -106,6 +106,9 @@ namespace ffu::ff8world
         float cloudFade() const;
         void drawOtherPlanets();
         void drawAirships();
+        void drawAirship(const AirshipPose& pose, ExternalMesh* model);
+        static void drawLayerShips();          // the live layer's replay (src/ffu_layer.cpp)
+        std::vector<AirshipPose> layerPoses;   // FF8's own airships drawn this frame, for that replay
         ExternalMesh* airshipMesh(const char* id);
         void drawShapes(bool translucent);
         bool partVisible(const MeshPart& part) const;

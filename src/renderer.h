@@ -524,9 +524,15 @@ public:
 
     // Final Fantasy Universe: the live layer (ffu_layer.cpp). A caller that wants its draws in the layer captures
     // the current state and a function that makes those draws again; they are replayed into the layer at the end
-    // of the frame, after all of FFNx's own views.
+    // of the frame, after all of FFNx's own views. It says what they show (the model id), its units per planet
+    // radius for the flight camera this frame, and how its depth is written.
+    enum : uint32_t { FFU_LAYER_DEPTH_FF7 = 0, FFU_LAYER_DEPTH_PACKED = 1, FFU_LAYER_DEPTH_FF8 = 2 };
     bool ffuLayerWanted();
-    void ffuLayerCapture(void (*draw)());
+    void ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, uint32_t depthFormat);
+    // The compositor: true while a fresh layer from `id`'s own game shows exactly that model (the caller then
+    // skips its copy); ffuLayerComposite draws it into the current view with this game's depth.
+    bool ffuLayerLive(const char *id);
+    void ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR);
 
     // ---
 

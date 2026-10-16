@@ -41,6 +41,12 @@ namespace ffu::ff7
         int32_t cameraOverride;
         float cameraPitch, cameraYaw, cameraZoom;
         float cameraBasis[9];
+        // version 4: a visitor walks FF7's world as someone else (docs/space.md "Who you are in another world"):
+        // hidePlayerModel = 1 hides the on-foot player model (a stand-in or the live layer shows the visitor);
+        // unitsPerR = FF7 units per planet radius the bridge places the flight camera with this frame (the live
+        // layer's depth scale, src/ffu_layer.cpp), 0 = FF7_GLOBE_RADIUS.
+        int32_t hidePlayerModel;
+        float unitsPerR;
     };
 
     // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models
@@ -61,6 +67,9 @@ namespace ffu::ff7
         AirshipMode mode;
         float model[12];
     };
+    // Exported by the bridge as `ffu_ff7_people[PEOPLE_SLOTS]` (bridge version 4): characters drawn the same way
+    // from mesh/airships/<id>.gltf: a visitor's labelled stand-in, and Cloud left standing as an NPC.
+    constexpr int PEOPLE_SLOTS = 2;
 
     // Exported by FFNx as `ffu_ff7_ffnx`: what the bridge reads to know FF7's camera exactly.
     struct Ffnx

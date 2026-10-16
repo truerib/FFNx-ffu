@@ -110,6 +110,28 @@ namespace ffu::ff7
         return found;
     }
 
+    static const Airship *bridgePeople()
+    {
+        static const Airship *found = nullptr;
+        static DWORD lastLook = 0;
+        if (found) return found;
+        DWORD now = GetTickCount();
+        if (lastLook && now - lastLook < 1000) return nullptr;
+        lastLook = now;
+        HMODULE bridge = bridgeModule();
+        found = bridge ? (const Airship *)GetProcAddress(bridge, "ffu_ff7_people") : nullptr;
+        return found;
+    }
+
+    static bool ownModel(const char *id) { return !strncmp(id, "ff7_", 4); }
+
+    // FF7 units per planet radius for the flight camera this frame (the bridge's, or the globe's radius).
+    static float unitsPerR()
+    {
+        const Control *c = control();
+        return c && c->version >= 4 && c->unitsPerR > 0.0f ? c->unitsPerR : 46936.7026f;
+    }
+
     // mesh/airships/<id>.gltf in native axes, textures from <mod_path>/world (as for FF8). nullptr: not found.
     static ExternalMesh *airshipMesh(const char *id)
     {
@@ -179,20 +201,30 @@ namespace ffu::ff7
         layerShips.clear();
     }
 
+    // Every model slot the bridge filled: the airships, then the people (a visitor's stand-in, Cloud as an NPC).
+    // An airship from another game whose own game is sending its live layer isn't drawn here: that layer is
+    // composited instead (src/ffu_layer.cpp, Rule 64).
     static void drawAirships()
     {
         const Airship *ships = bridgeAirships();
         if (!ships || !newRenderer.isFF7GlobeActive()) return;
+        const Airship *people = bridgePeople();
+        const Airship *slots[AIRSHIP_SLOTS + PEOPLE_SLOTS] = {};
+        bool live[AIRSHIP_SLOTS] = {};
+        for (int i = 0; i < AIRSHIP_SLOTS; ++i) slots[i] = &ships[i];
+        for (int i = 0; i < PEOPLE_SLOTS && people; ++i) slots[AIRSHIP_SLOTS + i] = &people[i];
 
         struct matrix view;
         ::memcpy(&view.m[0][0], newRenderer.getViewMatrix(), sizeof(view.m));
         bool stateSet = false;
-        for (int i = 0; i < AIRSHIP_SLOTS; ++i)
+        for (int i = 0; i < AIRSHIP_SLOTS + PEOPLE_SLOTS; ++i)
         {
-            const Airship &ship = ships[i];
+            if (!slots[i]) continue;
+            const Airship &ship = *slots[i];
             if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
-            ExternalMesh *model = airshipMesh(ship.id);
-            if (!model) continue;
+            const bool composited = i < AIRSHIP_SLOTS && !ownModel(ship.id) && newRenderer.ffuLayerLive(ship.id);
+            ExternalMesh *model = composited ? nullptr : airshipMesh(ship.id);
+            if (!model && !composited) continue;
             if (!stateSet)
             {
                 // The world's own projection, as FFNx's cloud and meteor meshes set it.
@@ -212,22 +244,26 @@ namespace ffu::ff7
                 newRenderer.doDepthWrite(true);
                 stateSet = true;
             }
-            drawAirship(ship, model, &view);
+            if (composited) live[i] = true;
+            else drawAirship(ship, model, &view);
         }
         if (!stateSet) return;
-        // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): the same ships again, alone, at the end of the
-        // frame, into the layer target another game composites (docs/crossover-design.md).
+        for (int i = 0; i < AIRSHIP_SLOTS; ++i)
+            if (live[i]) newRenderer.ffuLayerComposite(ships[i].id, Renderer::FFU_LAYER_DEPTH_FF7, unitsPerR());
+        // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): FF7's own airship again, alone, at the end of the
+        // frame, into the layer target another game composites (docs/crossover-design.md). Guests aren't in it:
+        // they are their own games' to send.
         if (newRenderer.ffuLayerWanted())
         {
             layerShips.clear();
             for (int i = 0; i < AIRSHIP_SLOTS; ++i)
             {
                 const Airship &ship = ships[i];
-                if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
+                if ((ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) || !ownModel(ship.id)) continue;
                 if (ExternalMesh *model = airshipMesh(ship.id)) layerShips.push_back({ ship, model });
             }
             layerView = view;
-            if (!layerShips.empty()) newRenderer.ffuLayerCapture(&drawLayerShips);
+            if (!layerShips.empty()) newRenderer.ffuLayerCapture(&drawLayerShips, layerShips[0].ship.id, unitsPerR(), Renderer::FFU_LAYER_DEPTH_FF7);
         }
         newRenderer.discardAllBindings();
         newRenderer.setSphericalWorldRate(0.0f);
@@ -254,11 +290,17 @@ namespace ffu::ff7
         uint32_t *hidden = c && c->version >= 2 && c->hideModel >= 0 ? modelDrawFlag(c->hideModel) : nullptr;
         const uint32_t saved = hidden ? *hidden : 0;
         if (hidden) *hidden = 0;
+        // A visitor on foot: Cloud's model (the single on-foot slot, ids 0-2) isn't drawn on the player.
+        uint32_t *player = c && c->version >= 4 && c->hidePlayerModel ? modelDrawFlag(0) : nullptr;
+        if (player == hidden) player = nullptr;
+        const uint32_t savedPlayer = player ? *player : 0;
+        if (player) *player = 0;
         // The game's models bend with the planet: say so here instead of relying on the rate the draw before
         // happened to leave (drawAirships sets 0 after itself; docs/world-map-audit.md #13).
         newRenderer.setSphericalWorldRate(1.0f);
         ((void (*)(int))::ff7_externals.world_draw_all_3d_model_74C6B0)(param);
         if (hidden) *hidden = saved;
+        if (player) *player = savedPlayer;
         drawAirships();
     }
 }
