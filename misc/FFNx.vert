@@ -188,7 +188,8 @@ void main()
         if (isFF8WorldMesh)
         {
             vec3 p;
-            if (ff8Globe[1].z > 7.5) p = FF8OtherPlanetPoint(normalize(pos.xyz) * 1.02);   // their clouds, 0.02 R up
+            if (ff8Globe[1].z > 8.5) p = FF8OtherPlanetPoint(normalize(pos.xyz) * 1.3);    // their atmosphere's shell
+            else if (ff8Globe[1].z > 7.5) p = FF8OtherPlanetPoint(normalize(pos.xyz) * 1.02);   // their clouds, 0.02 R up
             else if (ff8Globe[1].z > 6.5) p = FF8GlobePoint(normalize(pos.xyz), ff8Globe[5].w);   // our cloud shell
             else if (ff8Globe[1].z > 5.5) p = FF8GlobePoint(normalize(pos.xyz), ff8Globe[5].w);   // atmosphere shell
             else if (ff8Globe[1].z > 4.5) p = v_position0.xyz * ff8Globe[1].x;   // airship: climbs with the camera

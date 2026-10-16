@@ -628,6 +628,19 @@ namespace ffu::ff8world
                 newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
                 newRenderer.doDepthWrite(true);
             }
+            // Its atmosphere's glow, as its own game draws it, so nothing appears at the hand-over.
+            globe[6] = 9.0f;
+            newRenderer.setFF8WorldMesh(true, globe, 4.0f);
+            newRenderer.isTexture(false);
+            newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
+            newRenderer.doDepthWrite(false);
+            newRenderer.setCommonUniforms();
+            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+            sphere.bindField3dIndexBuffer(0, shape.indices.size());
+            newRenderer.draw(true, true, true);
+            newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
+            newRenderer.doDepthWrite(true);
+            newRenderer.isTexture(true);
         }
     }
 

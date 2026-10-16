@@ -88,11 +88,8 @@ uniform vec4 gameScriptedLightColor;
 // Final Fantasy Universe: the shared atmosphere (docs/space.md "## Atmosphere"), seen from FF8's camera.
 // ray: view direction in FF8's camera-relative frame; the planet's centre and the camera's height come from
 // the globe state (FFNx.vert FF8GlobePoint's frame, climbed and scaled the same way).
-vec3 FF8Atmosphere(vec3 ray)
+vec3 FF8AtmosphereOf(vec3 ray, vec3 centre, float radius)
 {
-    float scale = ff8Globe[1].x;
-    float radius = ff8Globe[1].y * scale;
-    vec3 centre = vec3(ff8Globe[0].x, ff8Globe[0].z + ff8Globe[1].y + ff8Globe[0].w, ff8Globe[0].y) * scale;
     float d = length(centre) / radius;
     float h = max(d - 1.0, 0.0);
     vec3 up = -normalize(centre);
@@ -114,8 +111,32 @@ vec3 FF8Atmosphere(vec3 ray)
     return (vec3_splat(1.0) - exp(-beta * tau)) * vec3(0.62, 0.80, 1.00);
 }
 
+// FF8's own planet, from the globe state.
+vec3 FF8Atmosphere(vec3 ray)
+{
+    float scale = ff8Globe[1].x;
+    vec3 centre = vec3(ff8Globe[0].x, ff8Globe[0].z + ff8Globe[1].y + ff8Globe[0].w, ff8Globe[0].y) * scale;
+    return FF8AtmosphereOf(ray, centre, ff8Globe[1].y * scale);
+}
+
+// Another planet in FF8's sky (FFNx.vert FF8OtherPlanetPoint's frame): its centre and radius.
+vec3 FF8OtherPlanetCentre()
+{
+    vec3 d = ff8Globe[5].xyz;
+    vec3 centre = vec3(ff8Globe[0].x, ff8Globe[0].z + ff8Globe[1].y, ff8Globe[0].y);
+    vec3 q = centre + ff8Globe[5].w * vec3(dot(d, ff8Globe[2].xyz), -dot(d, ff8Globe[3].xyz), dot(d, ff8Globe[4].xyz));
+    return vec3(q.x, q.y + ff8Globe[0].w, q.z) * ff8Globe[1].x;
+}
+
 void main()
 {
+    if (WMFlags.z > 3.5)   // another planet's atmosphere (docs/space.md "Other planets"): the same glow as its own game draws
+    {
+        vec3 centre = FF8OtherPlanetCentre();
+        if (dot(v_position0.xyz - centre, v_position0.xyz) > 0.0) discard;   // the shell's far side
+        gl_FragColor = vec4(FF8AtmosphereOf(normalize(v_position0.xyz), centre, ff8Globe[5].w * ff8Globe[1].x), 1.0);
+        return;
+    }
     if (WMFlags.z > 2.5)   // FF8 cloud shells (docs/space.md "Clouds"): the map turned east by the drift
     {
         float density = texture2D(tex_0, vec2(fract(v_texcoord0.x - WMFlags.w), v_texcoord0.y)).a;
