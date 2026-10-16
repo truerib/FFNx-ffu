@@ -39,6 +39,7 @@
 #include "cfg.h"
 #include "utils.h"
 #include "renderer.h"
+#include "ff7/world/ffu.h"
 #include "video/ntscj.h"
 
 CMRC_DECLARE(FFNx);
@@ -192,6 +193,8 @@ void Renderer::setCommonUniforms()
     setUniform(RendererUniform::FS_MORE_MOVIE_FLAGS, internalState.FSMoreMovieFlags.data());
     setUniform(RendererUniform::WM_FLAGS, internalState.WMFlags.data());
     setUniform(RendererUniform::FF8_GLOBE, internalState.ff8Globe, 6);
+    ffu::ff7::globeUniform(internalState.ff7Globe);
+    setUniform(RendererUniform::FF7_GLOBE, internalState.ff7Globe, 2);
     setUniform(RendererUniform::SKINNING_FLAGS, internalState.SmoothSkinningFlags.data());
     setUniform(RendererUniform::TIME_COLOR, internalState.TimeColor.data());
     setUniform(RendererUniform::TIME_DATA, internalState.TimeData.data());
@@ -1077,6 +1080,8 @@ void Renderer::init()
         true
     );
 
+    createFF7GlobePrograms();
+
     vertexLayout
         .begin()
         .add(bgfx::Attrib::Position, 4, bgfx::AttribType::Float)
@@ -1110,6 +1115,7 @@ void Renderer::init()
     bgfxUniformHandles[RendererUniform::FS_MORE_MOVIE_FLAGS] = createUniform("FSMoreMovieFlags", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::WM_FLAGS] = createUniform("WMFlags", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::FF8_GLOBE] = bgfx::createUniform("ff8Globe", bgfx::UniformType::Vec4, 6);
+    bgfxUniformHandles[RendererUniform::FF7_GLOBE] = bgfx::createUniform("ff7Globe", bgfx::UniformType::Vec4, 2);
     bgfxUniformHandles[RendererUniform::TIME_COLOR] = createUniform("TimeColor", bgfx::UniformType::Vec4);
     bgfxUniformHandles[RendererUniform::TIME_DATA] = createUniform("TimeData", bgfx::UniformType::Vec4);
 
@@ -1459,7 +1465,7 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
     bgfx::setState(internalState.state);
 
     auto flags = keepBindings ? BGFX_DISCARD_STATE : BGFX_DISCARD_ALL;
-    bgfx::submit(backendViewId, backendProgramHandles[backendProgram], 0, flags);
+    bgfx::submit(backendViewId, backendProgramHandles[programForDraw(backendProgram)], 0, flags);
 
     internalState.bHasDrawBeenDone = true;
     internalState.bTexturesBound = false;
@@ -2566,6 +2572,62 @@ void Renderer::setSmoothSkinningBoneMatrices(std::array<struct matrix, MAX_BONE_
 void Renderer::setSmoothSkinningUniforms()
 {
     setUniform(RendererUniform::BONE_MATRICES, internalState.bone_matrices, MAX_BONE_MATRICES);
+}
+
+// Final Fantasy Universe: FF7's world map is drawn with the FFNx.ffu7* shaders (the stock ones plus the
+// planet, FFNx.ffu7.sh). They are built for Vulkan only, the one renderer they are verified on; with any
+// other renderer, or when they aren't installed, FF7 keeps the stock shaders everywhere.
+void Renderer::createFF7GlobePrograms()
+{
+    if (ff8 || getCaps()->rendererType != bgfx::RendererType::Vulkan) return;
+
+    static const struct { RendererProgram program; const char* vertex; const char* fragment; } globe[] = {
+        { RendererProgram::FF7_GLOBE_FLAT, "shaders/FFNx.ffu7.flat.vk.vert", "shaders/FFNx.ffu7.flat.vk.frag" },
+        { RendererProgram::FF7_GLOBE_SMOOTH, "shaders/FFNx.ffu7.smooth.vk.vert", "shaders/FFNx.ffu7.smooth.vk.frag" },
+        { RendererProgram::FF7_GLOBE_LIGHTING_FLAT, "shaders/FFNx.ffu7.lighting.flat.vk.vert", "shaders/FFNx.ffu7.lighting.flat.vk.frag" },
+        { RendererProgram::FF7_GLOBE_LIGHTING_SMOOTH, "shaders/FFNx.ffu7.lighting.smooth.vk.vert", "shaders/FFNx.ffu7.lighting.smooth.vk.frag" },
+    };
+
+    for (const auto& entry : globe)
+    {
+        char vertex[MAX_PATH], fragment[MAX_PATH];
+        _snprintf(vertex, sizeof(vertex), "%s/%s", basedir, entry.vertex);
+        _snprintf(fragment, sizeof(fragment), "%s/%s", basedir, entry.fragment);
+        if (!fileExists(vertex) || !fileExists(fragment))
+        {
+            ffnx_info("FF7 globe shaders not installed (%s): the world map keeps the stock shaders\n", entry.vertex);
+            return;
+        }
+    }
+
+    for (const auto& entry : globe)
+        backendProgramHandles[entry.program] = bgfx::createProgram(getShader(entry.vertex), getShader(entry.fragment), true);
+
+    ffnx_info("FF7 globe shaders loaded\n");
+}
+
+Renderer::RendererProgram Renderer::programForDraw(RendererProgram program)
+{
+    if (!bgfx::isValid(backendProgramHandles[RendererProgram::FF7_GLOBE_SMOOTH]) || !ffu::ff7::onWorldMap()) return program;
+
+    switch (program)
+    {
+    case RendererProgram::FLAT: return RendererProgram::FF7_GLOBE_FLAT;
+    case RendererProgram::SMOOTH: return RendererProgram::FF7_GLOBE_SMOOTH;
+    case RendererProgram::LIGHTING_FLAT: return RendererProgram::FF7_GLOBE_LIGHTING_FLAT;
+    case RendererProgram::LIGHTING_SMOOTH: return RendererProgram::FF7_GLOBE_LIGHTING_SMOOTH;
+    default: return program;
+    }
+}
+
+float* Renderer::getD3DProjectionMatrix()
+{
+    return internalState.d3dProjectionMatrix;
+}
+
+float* Renderer::getD3DViewportMatrix()
+{
+    return internalState.d3dViewMatrix;
 }
 
 void Renderer::setD3DProjectionRaw(struct matrix* matrix)

@@ -23,6 +23,7 @@
 
 #include "../../globals.h"
 #include "camera.h"
+#include "ffu.h"
 #include "world.h"
 #include "utils.h"
 #include "defs.h"
@@ -58,7 +59,7 @@ namespace ff7::world
             if (camera_view_type == HIGHWIND_VIEW || world_map_type == UNDERWATER || player_model_id == TINY_BRONCO || player_model_id == BUGGY || player_model_id == SUBMARINE)
                 rotationSpeed.y = rotationSpeed.y + rotationSpeed.y * speedCoeff;
 
-            camera.localTargetRotation.x = std::min(std::max(camera.localTargetRotation.x - rotationSpeed.x, -175.0f), -95.0f);
+            camera.localTargetRotation.x = std::min(std::max(camera.localTargetRotation.x - rotationSpeed.x, ffu::ff7::pitchMin(-175.0f)), ffu::ff7::pitchMax(-95.0f));
             camera.localTargetRotation.y = std::remainder(camera.localTargetRotation.y - rotationSpeed.y, 360.0f);
 
             auto last_valid_player_direction = (*ff7_externals.world_event_current_entity_ptr_E39AD8)->direction;
@@ -253,7 +254,7 @@ namespace ff7::world
             case SUBMARINE:
                 return 5000;
             default:
-                return 35000;
+                return ffu::ff7::maxZoom(35000);   // Final Fantasy Universe: the climb into space lifts it
         }
     }
 }

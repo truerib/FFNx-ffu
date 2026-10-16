@@ -24,6 +24,7 @@
 #include "globals.h"
 #include "world.h"
 #include "camera.h"
+#include "ffu.h"
 #include "cfg.h"
 #include "utils.h"
 
@@ -272,7 +273,7 @@ namespace ff7::world {
                             vertical_delta = 10;
                         }
                     }
-                    else if((joyDir.y < 0 || is_key_pressed(current_key_input, DOWN)) && player_highwind_position.y < UINT16_MAX / 2 - 50 * movement_multiplier - 2000)
+                    else if((joyDir.y < 0 || is_key_pressed(current_key_input, DOWN)) && player_highwind_position.y < ffu::ff7::highwindCeiling(UINT16_MAX / 2 - 2000) - 50 * movement_multiplier)
                     {
                         if (joyDir.y < 0)
                         {

@@ -145,6 +145,7 @@ enum RendererUniform
     VIEW_OFFSET_MATRIX,
     INV_VIEW_OFFSET_MATRIX,
     FF8_GLOBE,              // Final Fantasy Universe: FF8 world mesh globe state (vec4 x 6)
+    FF7_GLOBE,              // Final Fantasy Universe: FF7 world-map globe state (vec4 x 2, src/ff7/world/ffu.cpp)
 
     BONE_MATRICES,
     SKINNING_FLAGS,
@@ -270,6 +271,10 @@ private:
         BLIT,
         YUVMOVIE,
         YUVMOVIE_TRUECOLOR,
+        FF7_GLOBE_FLAT,             // Final Fantasy Universe: FF7's world map as a planet (FFNx.ffu7*, Vulkan only)
+        FF7_GLOBE_SMOOTH,
+        FF7_GLOBE_LIGHTING_FLAT,
+        FF7_GLOBE_LIGHTING_SMOOTH,
         COUNT
     };
 
@@ -322,6 +327,7 @@ private:
         std::vector<float> FSTexFlags;
         std::vector<float> WMFlags;
         float ff8Globe[24] = {};
+        float ff7Globe[8] = {};
         float ff8WorldMeshMode = 0.0f;    // 1 world mesh, 2 atmosphere, 3 clouds (FFNx.frag)
         float ff8CloudDrift = 0.0f;       // turns of the cloud map round the planet (docs/space.md "Clouds")
         std::vector<float> FSMovieFlags;
@@ -456,6 +462,8 @@ private:
     bgfx::RendererType::Enum getUserChosenRenderer();
     void updateRendererShaderPaths();
     bgfx::ShaderHandle getShader(const char* filePath);
+    void createFF7GlobePrograms();                        // Final Fantasy Universe (src/ff7/world/ffu.cpp)
+    RendererProgram programForDraw(RendererProgram program);
 
     bgfx::UniformHandle createUniform(std::string uniformName, bgfx::UniformType::Enum uniformType);
 
@@ -594,6 +602,8 @@ public:
     void setD3DViweport(struct matrix* matrix);
     void setD3DProjection(struct matrix* matrix);
     void setD3DProjectionRaw(struct matrix* matrix);   // as given: no widescreen or view-distance rewrite
+    float* getD3DProjectionMatrix();   // Final Fantasy Universe: FF7's bridge reads the world lens
+    float* getD3DViewportMatrix();
     void setFF8WorldMesh(bool flag, const float* globe = nullptr, float fragmentMode = 1.0f, float cloudDrift = 0.0f);   // WMFlags.zw + ff8Globe
 
     // Internal coord calculation
