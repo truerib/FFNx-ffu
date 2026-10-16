@@ -206,7 +206,7 @@ void main()
             pos = mul(mul(d3dViewport, d3dProjection), vec4(p, 1.0));   // FF8's rotation and lens; w = view z
             // Behind the camera: z = w, so a triangle crossing the camera plane is clipped where w >= 0.
             pos.z = pos.w > 0.0 ? FF8Depth(pos.w) * pos.w : pos.w;
-            if (ff8Globe[1].z > 5.5 && pos.w > 0.0) pos.z = 0.99997 * pos.w;   // shell: in front of the sky only
+            if (ff8Globe[1].z > 5.5 && ff8Globe[1].z < 6.5 && pos.w > 0.0) pos.z = 0.99997 * pos.w;   // atmosphere: in front of the sky only
         }
         else
         {

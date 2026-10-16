@@ -549,9 +549,13 @@ namespace ffu::ff8world
         newRenderer.setWorldViewMatrix(&identity, false);
         float globe[24];
         fillGlobeUniform(globe, Part::World);
-        newRenderer.setFF8WorldMesh(true, globe);
+        const bool shadows = bgfx::isValid(ownClouds) && cloudFade() > 0.0f;   // as on the opaque terrain
+        globe[20] = shadows ? cloudFade() : 0.0f;
+        newRenderer.setFF8WorldMesh(true, globe, 1.0f, cloudDrift());
         newRenderer.setCommonUniforms();
+        if (shadows) newRenderer.useTexture(ownClouds.idx, RendererTextureSlot::TEX_U);
         drawShapes(true);
+        if (shadows) newRenderer.useTexture(0, RendererTextureSlot::TEX_U);
         newRenderer.isExternalTexture(false);
     }
 
@@ -581,7 +585,7 @@ namespace ffu::ff8world
         // The shell always encloses the camera, so every sky pixel is covered exactly once.
         globe[20] = cam.globe.space;                                                 // fade
         globe[23] = float(cam.c[1]) + cam.globe.altitude + 0.25f * cam.globe.radius;   // above the ground
-        newRenderer.setFF8WorldMesh(true, globe, true);
+        newRenderer.setFF8WorldMesh(true, globe, 2.0f);   // atmosphere
         newRenderer.setCommonUniforms();
         newRenderer.setCullMode(RendererCullMode::DISABLED);   // FFNx's FRONT mode is broken (missing break)
         sphere.bindField3dVertexBuffer(0, shape.vertices.size());
