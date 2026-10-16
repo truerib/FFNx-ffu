@@ -108,35 +108,63 @@ namespace ff7::world {
             *a1 = *ff7_externals.world_player_pos_E04918;
     }
 
+    // FFU (Final Fantasy Universe): the world-anchored globe of the FF7 world shaders (tools/globe
+    // FFNx.common.sh ApplyGlobeWorld, line for line), so the 2D effects and the Midgar Zolom, which are
+    // placed here on the CPU, sit on exactly the surface the terrain is drawn on. FFNx's own bend (a
+    // 250,000-unit sphere round the camera) left them floating above our 46,937-unit planet: the Zolom's
+    // shadow hung in the sky over its swamp (Richard, 2026-10-16).
+    static float ffu_smoothstep(float a, float b, float x)
+    {
+        float t = (x - a) / (b - a);
+        t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+        return t * t * (3.0f - 2.0f * t);
+    }
+
+    static void ffu_globe_lat_lon(float x, float z, float &latitude, float &longitude)
+    {
+        const float H = 229376.0f, R = 46936.7026f;
+        longitude = x / R;
+        latitude = 2.0f * atanf(expf((0.5f * H - z) / R)) - 0.5f * 3.14159265f;
+    }
+
     vector3<float> calcSphericalWorldPos(vector3<float> worldPos)
     {
-        struct matrix viewMatrix;
-        ::memcpy(&viewMatrix.m[0][0], newRenderer.getViewMatrix(), sizeof(viewMatrix.m));
-
-        vector3<float> viewPos = {0.0f, 0.0f, 0.0f};
-        transform_point(&viewMatrix, &worldPos, &viewPos);
-
+        const float W = 294912.0f, H = 229376.0f, R = 46936.7026f;
         struct matrix invViewMatrix;
         ::memcpy(&invViewMatrix.m[0][0], newRenderer.getInvViewMatrix(), sizeof(invViewMatrix.m));
+        vector3<float> origin = {0.0f, 0.0f, 0.0f}, camera = {0.0f, 0.0f, 0.0f};
+        transform_point(&invViewMatrix, &origin, &camera);
 
-        float rp = -250000;
+        // the point's copy nearest the camera (the flat map repeats every W x H)
+        float px = worldPos.x - floorf((worldPos.x - camera.x) / W + 0.5f) * W;
+        float pz = worldPos.z - floorf((worldPos.z - camera.z) / H + 0.5f) * H;
+        float latP, lonP, latQ, lonQ;
+        ffu_globe_lat_lon(px, pz, latP, lonP);
+        // the point under the camera: longitude wraps, latitude doesn't (CameraLatLon)
+        ffu_globe_lat_lon(camera.x - floorf(camera.x / W) * W, camera.z, latQ, lonQ);
 
-        vector2<float> planedir = { viewPos.x, viewPos.z};
-        float planeDirLength = sqrtf(planedir.x * planedir.x + planedir.y * planedir.y);
-        planedir.x /= planeDirLength;
-        planedir.y /= planeDirLength;
+        const float unitP[3] = { cosf(latP) * sinf(lonP), sinf(latP), cosf(latP) * cosf(lonP) };
+        const float up[3] = { cosf(latQ) * sinf(lonQ), sinf(latQ), cosf(latQ) * cosf(lonQ) };
+        const float east[3] = { cosf(lonQ), 0.0f, -sinf(lonQ) };
+        const float south[3] = { sinf(latQ) * sinf(lonQ), -cosf(latQ), sinf(latQ) * cosf(lonQ) };
+        const float n[3] = {
+            unitP[0] * east[0] + unitP[1] * east[1] + unitP[2] * east[2],
+            unitP[0] * up[0] + unitP[1] * up[1] + unitP[2] * up[2],
+            unitP[0] * south[0] + unitP[1] * south[1] + unitP[2] * south[2] };
+        // GlobeRadiusNow: the near-ground enlargement 1/cos(latitude) fading out with the camera's height
+        float c = cosf(latQ);
+        float nearGround = 1.0f / (c > 0.17242f ? c : 0.17242f);
+        float radius = R * (nearGround + (1.0f - nearGround) * ffu_smoothstep(22500.0f, 135000.0f, camera.y));
 
-        vector2<float> plane = {viewPos.y, sqrtf((viewPos.x) * (viewPos.x) + (viewPos.z) * (viewPos.z))};
-        vector2<float> planeScaled = {plane.x / rp, plane.y / rp};
-        vector2<float> planeScaledExp = {exp(planeScaled.x) * cos(planeScaled.y), exp(planeScaled.x) * sin(planeScaled.y)};
-        vector2<float> circle = { rp * planeScaledExp.x - rp, rp * planeScaledExp.y};
-
-        vector3<float> newViewPos = {circle.y * planedir.x, circle.x, circle.y * planedir.y};
-
-        vector3<float> newWorldPos = {0.0f, 0.0f, 0.0f};
-        transform_point(&invViewMatrix, &newViewPos, &newWorldPos);
-
-        return newWorldPos;
+        float height = worldPos.y;
+        float sideways = sqrtf(n[0] * n[0] + n[2] * n[2]);
+        float theta = atan2f(sideways, n[1]);
+        float dx = sideways > 1e-9f ? n[0] / sideways : 0.0f, dz = sideways > 1e-9f ? n[2] / sideways : 0.0f;
+        float h = height > 0.0f ? height : 0.0f;
+        theta *= 1.0f + (radius / (radius + h) - 1.0f) * ffu_smoothstep(5000.0f, 15000.0f, height);
+        return { camera.x + (radius + height) * sinf(theta) * dx,
+                 -radius + (radius + height) * cosf(theta),
+                 camera.z + (radius + height) * sinf(theta) * dz };
     }
 
     void world_draw_effects()
