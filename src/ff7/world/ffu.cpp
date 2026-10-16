@@ -91,6 +91,7 @@ namespace ffu::ff7
         out[0] = 1.0f;
         out[1] = (float)(ms % 21600000ULL) * (6.2831853f / 21600000.0f);
         out[2] = drawingWithCamera ? 1.0f : 0.0f;
+        out[3] = cameraOverride() ? 1.0f : 0.0f;   // flying: the shared lens at every height
     }
 
     // ---- Airships (docs/space.md "The airship's state") ---------------------------------------------

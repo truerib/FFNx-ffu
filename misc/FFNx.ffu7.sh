@@ -17,7 +17,8 @@
 // Used only by the FFNx.ffu7* shaders, which FFNx draws FF7's world map with instead of FFNx.* and
 // FFNx.lighting.* (Vulkan only; src/ff7/world/ffu.cpp). Every other game mode, and FF8, keeps the stock shaders.
 
-// [0] x = 1 on FF7's world map, y = cloud drift (radians, one turn east per 6 h of real time)
+// [0] x = 1 on FF7's world map, y = cloud drift (radians, one turn east per 6 h of real time),
+//     z = 1 while an airship flying with the camera is drawn, w = 1 while the airship is flown (space lens)
 uniform vec4 ff7Globe[2];
 #define FFU_CLOUD_DRIFT ff7Globe[0].y
 
@@ -565,7 +566,8 @@ vec4 GameLens(mat4 viewport, mat4 projection)
 vec4 SpaceLens(mat4 viewport, mat4 projection, vec3 cameraPos)
 {
 	vec4 lens = GameLens(viewport, projection);
-	float share = smoothstep(1.5, 3.0, 1.0 + CameraHeightR(cameraPos));
+	// While the airship is flown the shared 30-degree lens holds at every height (docs/space.md "Chase camera").
+	float share = max(smoothstep(1.5, 3.0, 1.0 + CameraHeightR(cameraPos)), ff7Globe[0].w);
 	float fieldOfView = mix(2.0 * atan(1.0 / lens.y), 30.0 * FFU_PI / 180.0, share);
 	return vec4(1.0 / (tan(0.5 * fieldOfView) * lens.y), lens.zw, share);
 }
