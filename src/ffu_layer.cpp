@@ -68,6 +68,17 @@ namespace
 
     const char *ownGame() { return ff8 ? "ff8" : "ff7"; }
 
+    // Z:\tmp\ffu-layer-<game>.shm in Richard's Play copy (FFU_CHANNEL=play), ffu-layer-<game>-dev.shm in the dev copy
+    // (docs/play-copy.md), so the two copies never read each other's layers. Same rule as mods/ff9-globe LivePublish.cs.
+    void layerPath(char (&path)[64], const char *game)
+    {
+        char channel[8];
+        const DWORD length = GetEnvironmentVariableA("FFU_CHANNEL", channel, sizeof(channel));
+        const bool play = length && length < sizeof(channel) && !strcmp(channel, "play");
+        _snprintf(path, sizeof(path), "Z:\\tmp\\ffu-layer-%s%s.shm", game, play ? "" : "-dev");
+        path[sizeof(path) - 1] = 0;
+    }
+
     // ---- Publishing ----
     uint8_t *shared = nullptr;
     size_t sharedSize = 0;
@@ -119,7 +130,7 @@ namespace
         if (mapRetryAt && (LONG)(GetTickCount() - mapRetryAt) < 0) return nullptr;
         needed = std::max(needed, sizeof(LayerHeader) + (size_t)MAX_CROP_WIDTH * MAX_CROP_HEIGHT * 8);
         char path[64];
-        _snprintf(path, sizeof(path), "Z:\\tmp\\ffu-layer-%s.shm", ownGame());
+        layerPath(path, ownGame());
         mapRetryAt = GetTickCount() + 5000;   // until it works, at most one try every 5 s
         HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE) { ffnx_error("FFU layer: no shared file %s (%lu)\n", path, GetLastError()); return nullptr; }
@@ -175,7 +186,7 @@ namespace
         if (guest.nextTry && (LONG)(now - guest.nextTry) < 0) return false;
         guest.nextTry = now + 1000;
         char path[64];
-        _snprintf(path, sizeof(path), "Z:\\tmp\\ffu-layer-%s.shm", guest.game);
+        layerPath(path, guest.game);
         HANDLE file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE) return false;   // that game hasn't published yet
         LARGE_INTEGER size = {};
