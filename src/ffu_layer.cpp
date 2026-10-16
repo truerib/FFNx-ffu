@@ -46,6 +46,17 @@ namespace
     LARGE_INTEGER frequency, requested;
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
     uint32_t framesWaitedTotal = 0, published = 0, requestedFrame = 0;
+    float requestedDepths[2] = {0.0f, 0.0f};   // the game's depth at 30,000 and 60,000 units when requested
+
+    // FFNx.ffu7.sh GameDepthAt on the CPU: the shader's mul(mul(viewport, projection), v) on FF7's row-major
+    // matrices is the row vector (0, 0, w, 1) * projection * viewport.
+    float gameDepthAt(const float *viewport, const float *projection, float w)
+    {
+        float row[4], clip[4];
+        for (int j = 0; j < 4; ++j) row[j] = w * projection[8 + j] + projection[12 + j];
+        for (int k = 0; k < 4; ++k) clip[k] = row[0] * viewport[k] + row[1] * viewport[4 + k] + row[2] * viewport[8 + k] + row[3] * viewport[12 + k];
+        return clip[3] != 0.0f ? clip[2] / clip[3] : 0.0f;
+    }
 
     bool layerWanted()
     {
@@ -123,6 +134,8 @@ void Renderer::ffuLayerEnd()
         bgfx::read({.handle = ffuLayerRead[1]}, ffuLayerDepth.data());
         QueryPerformanceCounter(&requested);
         requestedFrame = ffuLastFrame;
+        requestedDepths[0] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 30000.0f);
+        requestedDepths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
     }
     ++backendViewId;   // what follows draws on the main framebuffer again (draw() sets it per call)
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
@@ -147,6 +160,12 @@ void Renderer::ffuLayerPoll()
         header->fullHeight = framebufferHeight;
         header->frame = ffuLayerPending;
         header->frequency = frequency.QuadPart;
+        // To turn the layer's depth (WorldDepth, FFNx.ffu7.sh) back into view distance: the game's depth at
+        // 30,000 and 60,000 units and which end of the range is far.
+        header->reserved[0] = requestedDepths[0];
+        header->reserved[1] = requestedDepths[1];
+        header->reserved[2] = requestedDepths[1] < requestedDepths[0] ? 0.0f : 1.0f;
+        header->reserved[3] = 0.0f;
         ::memcpy(base + sizeof(LayerHeader), ffuLayerColour.data(), pixels * 4);
         ::memcpy(base + sizeof(LayerHeader) + pixels * 4, ffuLayerDepth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
@@ -163,9 +182,9 @@ void Renderer::ffuLayerPoll()
     {
         size_t covered = 0;
         for (size_t i = 3; i < ffuLayerColour.size(); i += 4) covered += ffuLayerColour[i] != 0;
-        ffnx_info("FFU layer: %u readbacks of %ux%u: request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); last frame %.1f%% covered\n",
+        ffnx_info("FFU layer: %u readbacks of %ux%u: request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); last frame %.1f%% covered; depth at 30k/60k %.6f/%.6f\n",
                   published, ffuLayerWidth, ffuLayerHeight, readbackTotal / 120, readbackMax, framesWaitedTotal / 120.0,
-                  publishTotal / 120, publishMax, 100.0 * covered / pixels);
+                  publishTotal / 120, publishMax, 100.0 * covered / pixels, requestedDepths[0], requestedDepths[1]);
         readbackTotal = readbackMax = publishTotal = publishMax = 0;
         framesWaitedTotal = 0;
     }
