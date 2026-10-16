@@ -605,6 +605,22 @@ namespace ffu::ff8world
         {
             float globe[24];
             fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
+            // Its atmosphere's glow first, as its own game draws it (only the limb shows: the opaque planet
+            // drawn next covers the disc), so nothing appears at the hand-over.
+            globe[6] = 9.0f;
+            newRenderer.setFF8WorldMesh(true, globe, 4.0f);
+            newRenderer.isTexture(false);
+            newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
+            newRenderer.doDepthWrite(false);
+            newRenderer.setCommonUniforms();
+            newRenderer.setCullMode(RendererCullMode::DISABLED);
+            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
+            sphere.bindField3dIndexBuffer(0, shape.indices.size());
+            newRenderer.draw(true, true, true);
+            newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
+            newRenderer.doDepthWrite(true);
+            newRenderer.isTexture(true);
+            globe[6] = 4.0f;
             newRenderer.setFF8WorldMesh(true, globe);
             newRenderer.setCommonUniforms();
             newRenderer.setCullMode(RendererCullMode::DISABLED);
@@ -628,19 +644,6 @@ namespace ffu::ff8world
                 newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
                 newRenderer.doDepthWrite(true);
             }
-            // Its atmosphere's glow, as its own game draws it, so nothing appears at the hand-over.
-            globe[6] = 9.0f;
-            newRenderer.setFF8WorldMesh(true, globe, 4.0f);
-            newRenderer.isTexture(false);
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_ADD);
-            newRenderer.doDepthWrite(false);
-            newRenderer.setCommonUniforms();
-            sphere.bindField3dVertexBuffer(0, shape.vertices.size());
-            sphere.bindField3dIndexBuffer(0, shape.indices.size());
-            newRenderer.draw(true, true, true);
-            newRenderer.setBlendMode(RendererBlendMode::BLEND_NONE);
-            newRenderer.doDepthWrite(true);
-            newRenderer.isTexture(true);
         }
     }
 
