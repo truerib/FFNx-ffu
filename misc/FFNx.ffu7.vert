@@ -181,7 +181,8 @@ void main()
         else pos = v_position0;
 
         pos = mul(mul(d3dViewport, d3dProjection), vec4(pos.xyz, 1.0));
-        if (isApplySphericalWorld || planetSlot >= 0.0)
+        // The space lens: the planet, the other planets, and airships that fly with the camera (src/ff7/world/ffu.cpp).
+        if (isApplySphericalWorld || planetSlot >= 0.0 || ff7Globe[0].z > 0.5)
             pos = ApplySpaceLens(pos, SpaceLens(d3dViewport, d3dProjection, mul(invViewMatrix, vec4(0.0, 0.0, 0.0, 1.0)).xyz));
 #ifndef FFU_NO_LOGDEPTH
         {

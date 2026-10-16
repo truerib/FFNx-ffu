@@ -602,6 +602,7 @@ public:
     void setD3DViweport(struct matrix* matrix);
     void setD3DProjection(struct matrix* matrix);
     void setD3DProjectionRaw(struct matrix* matrix);   // as given: no widescreen or view-distance rewrite
+    bool isFF7GlobeActive();           // Final Fantasy Universe: FF7's world map is being drawn as a planet
     float* getD3DProjectionMatrix();   // Final Fantasy Universe: FF7's bridge reads the world lens
     float* getD3DViewportMatrix();
     void setFF8WorldMesh(bool flag, const float* globe = nullptr, float fragmentMode = 1.0f, float cloudDrift = 0.0f);   // WMFlags.zw + ff8Globe

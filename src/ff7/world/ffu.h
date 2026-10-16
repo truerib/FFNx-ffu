@@ -32,6 +32,24 @@ namespace ffu::ff7
         float maxZoom;             // the world camera's zoom cap (FFNx: 35000)
         float pitchMin, pitchMax;  // the world camera's pitch clamp (FFNx: -175, -95)
         int32_t highwindCeiling;   // the Highwind climbs while lower (FFNx: 32767 - 2000 - 50 x multiplier)
+        int32_t hideModel;         // version 2: FF7 world model id not drawn (the airship a guest replaces), -1 none
+    };
+
+    // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models
+    // (mesh/airships/<id>.gltf, native axes), guests from the other games (docs/space.md "The airship's state").
+    // model: model space -> FF7 world space, row r: p[r] = model[4r..4r+2] . v + model[4r+3].
+    constexpr int AIRSHIP_SLOTS = 2;
+    enum AirshipMode : int32_t
+    {
+        AIRSHIP_HIDDEN = 0,
+        AIRSHIP_WITH_CAMERA = 1,   // flies with the camera: not bent onto the globe; the space lens applies
+        AIRSHIP_ON_PLANET = 2,     // stands on FF7's planet: bent onto the globe like FF7's own models
+    };
+    struct Airship
+    {
+        char id[24];
+        AirshipMode mode;
+        float model[12];
     };
 
     // Exported by FFNx as `ffu_ff7_ffnx`: what the bridge reads to know FF7's camera exactly.
@@ -49,6 +67,10 @@ namespace ffu::ff7
     float pitchMin(float fallback);
     float pitchMax(float fallback);
     int highwindCeiling(int fallback);
-    // The shaders' FF7 globe state for this draw: [0] = (on the world map, cloud drift in radians, 0, 0).
+    // The shaders' FF7 globe state for this draw: [0] = (on the world map, cloud drift in radians,
+    // 1 while an airship that flies with the camera is drawn, 0).
     void globeUniform(float out[8]);
+    // Replaces the game's world_draw_all_3d_model_74C6B0 call in the overworld draw: hides the model the
+    // bridge asks to hide, then draws the airships after FF7's own models.
+    void drawAllModels(int param);
 }

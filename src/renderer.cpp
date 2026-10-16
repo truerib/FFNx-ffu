@@ -2606,9 +2606,14 @@ void Renderer::createFF7GlobePrograms()
     ffnx_info("FF7 globe shaders loaded\n");
 }
 
+bool Renderer::isFF7GlobeActive()
+{
+    return bgfx::isValid(backendProgramHandles[RendererProgram::FF7_GLOBE_SMOOTH]) && ffu::ff7::onWorldMap();
+}
+
 Renderer::RendererProgram Renderer::programForDraw(RendererProgram program)
 {
-    if (!bgfx::isValid(backendProgramHandles[RendererProgram::FF7_GLOBE_SMOOTH]) || !ffu::ff7::onWorldMap()) return program;
+    if (!isFF7GlobeActive()) return program;
 
     switch (program)
     {
