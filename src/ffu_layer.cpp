@@ -72,7 +72,10 @@ namespace
     size_t sharedSize = 0;
     LARGE_INTEGER frequency;
     // The crop read back each frame: the box round the airship, at the layer's full resolution. It follows the
-    // airship from the alpha of the last frames (the chase camera always looks at it, so it hardly moves).
+    // airship from the alpha of the last frames (the chase camera always looks at it, so it hardly moves), and grows
+    // (never shrinks, so a host rarely remakes its textures) whenever the airship reaches its edge: the Ragnarok was
+    // cut off by a fixed 1280 x 800 box.
+    constexpr uint16_t MAX_CROP_WIDTH = 2048, MAX_CROP_HEIGHT = 1600;   // the shared file's room
     uint16_t cropWidth = 1280, cropHeight = 800;
     float cropCentre[2] = { -1.0f, -1.0f };
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
@@ -101,7 +104,7 @@ namespace
             QueryPerformanceFrequency(&frequency);
             const char *crop = getenv(ff8 ? "FFU_FF8_LAYER_CROP" : "FFU_FF7_LAYER_CROP");   // WxH (tests)
             unsigned w = 0, h = 0;
-            if (crop && sscanf(crop, "%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 && w <= 4096 && h <= 4096) { cropWidth = (uint16_t)w; cropHeight = (uint16_t)h; }
+            if (crop && sscanf(crop, "%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 && w <= MAX_CROP_WIDTH && h <= MAX_CROP_HEIGHT) { cropWidth = (uint16_t)w; cropHeight = (uint16_t)h; }
         }
         return wanted == 1;
     }
@@ -110,7 +113,8 @@ namespace
     uint8_t *mapShared(size_t needed)
     {
         if (shared && sharedSize >= needed) return shared;
-        if (shared) return nullptr;   // a bigger layer than the first: not supported
+        if (shared) return nullptr;   // bigger than the room made for the largest crop: not supported
+        needed = std::max(needed, sizeof(LayerHeader) + (size_t)MAX_CROP_WIDTH * MAX_CROP_HEIGHT * 8);
         char path[64];
         _snprintf(path, sizeof(path), "Z:\\tmp\\ffu-layer-%s.shm", ownGame());
         HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, 0, nullptr);
@@ -281,8 +285,13 @@ bool Renderer::ffuLayerBegin()
     static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests)
     if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : 1; }
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
-    const uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
-    if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight)
+    uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
+    bool pending = false;
+    for (const auto &slot : ffuLayerSlots) pending |= slot.pending != 0;
+    const bool resized = bgfx::isValid(ffuLayerFrameBuffer) && (readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight);
+    if (resized && pending) { readWidth = ffuLayerReadWidth; readHeight = ffuLayerReadHeight; }   // once the reads in flight are in
+    if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight
+        || readWidth != ffuLayerReadWidth || readHeight != ffuLayerReadHeight)
     {
         if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
         for (auto &slot : ffuLayerSlots)
@@ -423,6 +432,17 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     {
         cropCentre[0] = slot.cropX + (minX + maxX) * 0.5f;
         cropCentre[1] = slot.cropY + (minY + maxY) * 0.5f;
+        // Reaching an edge of the box that isn't the picture's: the next boxes are a quarter bigger.
+        const bool wide = (minX <= 2 && slot.cropX > 0) || (maxX >= ffuLayerReadWidth - 3 && slot.cropX + ffuLayerReadWidth < ffuLayerWidth);
+        const bool tall = (minY <= 2 && slot.cropY > 0) || (maxY >= ffuLayerReadHeight - 3 && slot.cropY + ffuLayerReadHeight < ffuLayerHeight);
+        const uint16_t grownWidth = wide ? (uint16_t)std::min<int>(MAX_CROP_WIDTH, (ffuLayerReadWidth * 5 / 4 + 63) / 64 * 64) : cropWidth;
+        const uint16_t grownHeight = tall ? (uint16_t)std::min<int>(MAX_CROP_HEIGHT, (ffuLayerReadHeight * 5 / 4 + 63) / 64 * 64) : cropHeight;
+        if (grownWidth > cropWidth || grownHeight > cropHeight)
+        {
+            cropWidth = std::max(cropWidth, grownWidth);
+            cropHeight = std::max(cropHeight, grownHeight);
+            ffnx_info("FFU layer: %s reaches the box's edge; boxes of %ux%u from now on\n", meta.id, cropWidth, cropHeight);
+        }
     }
     if (++published % 120 == 0)
     {
