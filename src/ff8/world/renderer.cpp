@@ -769,7 +769,11 @@ namespace ffu::ff8world
             // Characters (Squall as an NPC) aren't airships: the layer carries the flown ship only.
             if (own && strcmp(pose.id, "ff8_squall") && newRenderer.ffuLayerWanted()) layerPoses.push_back(pose);
         }
-        for (const char *id : live) newRenderer.ffuLayerComposite(id, ::Renderer::FFU_LAYER_DEPTH_FF8, unitsPerR);
+        // FF8 stretches its own picture sideways near the ground (buildProjection); the layers are square.
+        const float scaleX = *(const float *)SSIGPU_SCALE_X, scaleY = *(const float *)SSIGPU_SCALE_Y;
+        const float ratio = scaleX > 0.0f ? scaleY / scaleX : 1.0f;
+        const float xScale = (1.0f + cam.globe.space * (ratio - 1.0f)) / ratio;
+        for (const char *id : live) newRenderer.ffuLayerComposite(id, ::Renderer::FFU_LAYER_DEPTH_FF8, unitsPerR, xScale);
         if (!layerPoses.empty()) newRenderer.ffuLayerCapture(&Renderer::drawLayerShips, layerPoses[0].id, unitsPerR, ::Renderer::FFU_LAYER_DEPTH_FF8);
         struct matrix identity;
         identity_matrix(&identity);

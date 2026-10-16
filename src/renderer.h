@@ -532,7 +532,8 @@ public:
     // The compositor: true while a fresh layer from `id`'s own game shows exactly that model (the caller then
     // skips its copy); ffuLayerComposite draws it into the current view with this game's depth.
     bool ffuLayerLive(const char *id);
-    void ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR);
+    // hostXScale: the host's horizontal stretch of its own picture against square pixels (FF8 on the ground).
+    void ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR, float hostXScale = 1.0f);
 
     // ---
 

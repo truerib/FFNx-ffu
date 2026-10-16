@@ -58,7 +58,8 @@ namespace
         float unitsPerR;                  // the publisher's units per planet radius for the flight camera this frame
         float nearDistance, farDistance;  // FFU_LAYER_DEPTH_PACKED: the range t spans (publisher's units)
         char id[24];                      // what it shows: the airship's model id (mesh/airships/<id>.gltf)
-        uint32_t reserved[6];
+        uint32_t covered;                 // pixels with alpha on the publisher's sampling grid: 0 = nothing shown
+        uint32_t reserved[5];
     };
     static_assert(sizeof(LayerHeader) == 128, "the readers expect a 128-byte header");
     constexpr uint32_t FFU_LAYER_DEPTH_FF7 = Renderer::FFU_LAYER_DEPTH_FF7, FFU_LAYER_DEPTH_PACKED = Renderer::FFU_LAYER_DEPTH_PACKED,
@@ -76,7 +77,10 @@ namespace
     // (never shrinks, so a host rarely remakes its textures) whenever the airship reaches its edge: the Ragnarok was
     // cut off by a fixed 1280 x 800 box.
     constexpr uint16_t MAX_CROP_WIDTH = 2048, MAX_CROP_HEIGHT = 1600;   // the shared file's room
-    uint16_t cropWidth = 1280, cropHeight = 800;
+    constexpr uint16_t BASE_CROP_WIDTH = 1280, BASE_CROP_HEIGHT = 800;
+    uint16_t cropWidth = BASE_CROP_WIDTH, cropHeight = BASE_CROP_HEIGHT;
+    uint32_t smallFrames = 0;   // frames in a row the airship has filled under 60% of the box (it shrinks back after 240)
+    DWORD mapRetryAt = 0;       // the shared file couldn't be mapped: try again from then
     float cropCentre[2] = { -1.0f, -1.0f };
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
     uint32_t framesWaitedTotal = 0, published = 0, skipped = 0;
@@ -114,16 +118,25 @@ namespace
     {
         if (shared && sharedSize >= needed) return shared;
         if (shared) return nullptr;   // bigger than the room made for the largest crop: not supported
+        if (mapRetryAt && (LONG)(GetTickCount() - mapRetryAt) < 0) return nullptr;
         needed = std::max(needed, sizeof(LayerHeader) + (size_t)MAX_CROP_WIDTH * MAX_CROP_HEIGHT * 8);
         char path[64];
         _snprintf(path, sizeof(path), "Z:\\tmp\\ffu-layer-%s.shm", ownGame());
+        mapRetryAt = GetTickCount() + 5000;   // until it works, at most one try every 5 s
         HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, 0, nullptr);
         if (file == INVALID_HANDLE_VALUE) { ffnx_error("FFU layer: no shared file %s (%lu)\n", path, GetLastError()); return nullptr; }
         HANDLE map = CreateFileMappingA(file, nullptr, PAGE_READWRITE, 0, (DWORD)needed, nullptr);
+        CloseHandle(file);
         if (!map) { ffnx_error("FFU layer: no file mapping (%lu)\n", GetLastError()); return nullptr; }
         shared = (uint8_t *)MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, needed);
+        CloseHandle(map);   // the view keeps the mapping alive
         if (!shared) { ffnx_error("FFU layer: no view (%lu)\n", GetLastError()); return nullptr; }
         sharedSize = needed;
+        mapRetryAt = 0;
+        // The file outlives the game: a run stopped mid-publish leaves its sequence odd ("being written"), which
+        // would turn this run's meaning of odd and even round and every reader would refuse every frame.
+        LayerHeader *header = (LayerHeader *)shared;
+        if (header->seq & 1) InterlockedIncrement(&header->seq);
         return shared;
     }
 
@@ -229,12 +242,17 @@ namespace
         }
     }
 
+    // Live: published less than LIVE_SECONDS ago (the publisher's stamp, on the clock every Wine process shares,
+    // so an old frame found in the file after a wake-up isn't taken for a live one) and showing something.
     bool fresh(const Guest &guest)
     {
-        if (guest.lastSeq < 0 || !bgfx::isValid(guest.colour)) return false;
+        if (guest.lastSeq < 0 || !bgfx::isValid(guest.colour) || !guest.header.covered) return false;
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
-        return (now.QuadPart - guest.arrived.QuadPart) < (LONGLONG)(LIVE_SECONDS * frequency.QuadPart);
+        const LARGE_INTEGER &published = guest.header.frequency > 0 && guest.header.stamp > 0
+            ? *(const LARGE_INTEGER *)&guest.header.stamp : guest.arrived;
+        const LONGLONG age = now.QuadPart - published.QuadPart;
+        return age > -(LONGLONG)frequency.QuadPart && age < (LONGLONG)(LIVE_SECONDS * frequency.QuadPart);
     }
 
     bgfx::ProgramHandle compositeProgram = BGFX_INVALID_HANDLE;
@@ -387,6 +405,18 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     QueryPerformanceCounter(&ready);
     const size_t pixels = (size_t)ffuLayerReadWidth * ffuLayerReadHeight;
     const Meta &meta = slotMeta[&slot - ffuLayerSlots];
+    // Where the airship is in this crop (its alpha's box, every 2nd pixel), before publishing: an empty crop is
+    // published as showing nothing, so a host draws its own copy rather than nothing.
+    int minX = INT_MAX, minY = INT_MAX, maxX = -1, maxY = -1;
+    uint32_t covered = 0;
+    for (int y = 0; y < ffuLayerReadHeight; y += 2)
+        for (int x = 0; x < ffuLayerReadWidth; x += 2)
+            if (slot.colour[((size_t)y * ffuLayerReadWidth + x) * 4 + 3])
+            {
+                ++covered;
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+            }
     uint8_t *base = mapShared(sizeof(LayerHeader) + pixels * 8);
     if (base)
     {
@@ -409,6 +439,7 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
         header->unitsPerR = meta.unitsPerR;
         header->nearDistance = header->farDistance = 0.0f;
         ::memcpy(header->id, meta.id, sizeof(header->id));
+        header->covered = covered;
         ::memcpy(base + sizeof(LayerHeader), slot.colour.data(), pixels * 4);
         ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
@@ -421,16 +452,13 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     readbackTotal += readback; if (readback > readbackMax) readbackMax = readback;
     publishTotal += publish; if (publish > publishMax) publishMax = publish;
     framesWaitedTotal += ffuLastFrame - slot.requestedFrame;
-    // Where the airship is now (its alpha's box, every 2nd pixel): the next crops follow it.
-    int minX = INT_MAX, minY = INT_MAX, maxX = -1, maxY = -1;
-    for (int y = 0; y < ffuLayerReadHeight; y += 2)
-        for (int x = 0; x < ffuLayerReadWidth; x += 2)
-            if (slot.colour[((size_t)y * ffuLayerReadWidth + x) * 4 + 3])
-            {
-                minX = std::min(minX, x); maxX = std::max(maxX, x);
-                minY = std::min(minY, y); maxY = std::max(maxY, y);
-            }
-    if (maxX >= 0)
+    if (maxX < 0)
+    {
+        // Nothing in the box: the next boxes start again where the chase camera puts the airship.
+        cropCentre[0] = cropCentre[1] = -1.0f;
+        smallFrames = 0;
+    }
+    else
     {
         cropCentre[0] = slot.cropX + (minX + maxX) * 0.5f;
         cropCentre[1] = slot.cropY + (minY + maxY) * 0.5f;
@@ -443,16 +471,28 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
         {
             cropWidth = std::max(cropWidth, grownWidth);
             cropHeight = std::max(cropHeight, grownHeight);
+            smallFrames = 0;
             ffnx_info("FFU layer: %s reaches the box's edge; boxes of %ux%u from now on\n", meta.id, cropWidth, cropHeight);
+        }
+        // Filling under 60% of a box bigger than the first one for 240 frames: back down to 1.4 times the airship
+        // (FF7 and FF8 are 32-bit, and the largest box costs ~300 MB of readback, upload and file view).
+        const int shownWidth = maxX - minX + 2, shownHeight = maxY - minY + 2;
+        const bool small = shownWidth < ffuLayerReadWidth * 0.6f && shownHeight < ffuLayerReadHeight * 0.6f
+                           && (cropWidth > BASE_CROP_WIDTH || cropHeight > BASE_CROP_HEIGHT);
+        smallFrames = small ? smallFrames + 1 : 0;
+        if (smallFrames >= 240)
+        {
+            cropWidth = (uint16_t)std::clamp<int>((int)(shownWidth * 1.4f + 63) / 64 * 64, BASE_CROP_WIDTH, cropWidth);
+            cropHeight = (uint16_t)std::clamp<int>((int)(shownHeight * 1.4f + 63) / 64 * 64, BASE_CROP_HEIGHT, cropHeight);
+            smallFrames = 0;
+            ffnx_info("FFU layer: %s is smaller again; boxes of %ux%u from now on\n", meta.id, cropWidth, cropHeight);
         }
     }
     if (++published % 120 == 0)
     {
-        size_t covered = 0;
-        for (size_t i = 3; i < slot.colour.size(); i += 4) covered += slot.colour[i] != 0;
         ffnx_info("FFU layer: %u readbacks of %s %ux%u (at %u,%u): request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); %u skipped (ring full); last frame %.1f%% covered; depth format %u, %.1f units per R\n",
                   published, meta.id, ffuLayerReadWidth, ffuLayerReadHeight, slot.cropX, slot.cropY, readbackTotal / 120, readbackMax, framesWaitedTotal / 120.0,
-                  publishTotal / 120, publishMax, skipped, 100.0 * covered / pixels, meta.depthFormat, meta.unitsPerR);
+                  publishTotal / 120, publishMax, skipped, 400.0 * covered / pixels, meta.depthFormat, meta.unitsPerR);
         readbackTotal = readbackMax = publishTotal = publishMax = 0;
         framesWaitedTotal = 0;
         skipped = 0;
@@ -473,13 +513,8 @@ bool Renderer::ffuLayerLive(const char *id)
     Guest *guest = enabled ? guestFor(id) : nullptr;
     if (!guest) return false;
     receive(*guest, ffuLastFrame);
-    return fresh(*guest) && !strncmp(guest->header.id, id, sizeof(guest->header.id));
-}
-
-void Renderer::ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR)
-{
-    Guest *guest = guestFor(id);
-    if (!guest || !fresh(*guest) || hostUnitsPerR <= 0.0f || guest->header.unitsPerR <= 0.0f) return;
+    if (!fresh(*guest) || strncmp(guest->header.id, id, sizeof(guest->header.id)) || guest->header.unitsPerR <= 0.0f) return false;
+    // Live only when it can be drawn: the caller then skips its copy.
     if (compositorState == 0)
     {
         compositorState = -1;
@@ -488,7 +523,7 @@ void Renderer::ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float
         _snprintf(vertexPath, sizeof(vertexPath), "%s/%s", basedir, vertex);
         _snprintf(fragmentPath, sizeof(fragmentPath), "%s/%s", basedir, fragment);
         if (bgfx::getCaps()->rendererType != bgfx::RendererType::Vulkan || !fileExists(vertexPath) || !fileExists(fragmentPath))
-            ffnx_error("FFU layer: no compositor (needs Vulkan and %s)\n", vertex);
+            ffnx_error("FFU layer: no compositor (needs Vulkan and %s): visitors stay drawn as copies\n", vertex);
         else
         {
             compositeProgram = bgfx::createProgram(getShader(vertex), getShader(fragment), true);
@@ -502,11 +537,22 @@ void Renderer::ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float
             ffnx_info("FFU layer: compositor %s\n", compositorState > 0 ? "ready" : "failed");
         }
     }
-    if (compositorState < 0 || bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6) return;
+    return compositorState > 0;
+}
+
+void Renderer::ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR, float hostXScale)
+{
+    Guest *guest = guestFor(id);
+    if (!guest || compositorState <= 0 || !fresh(*guest) || hostUnitsPerR <= 0.0f || guest->header.unitsPerR <= 0.0f) return;
+    if (bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6) return;
     const LayerHeader &h = guest->header;
-    // Its crop's place in the picture: both games draw the same flight camera with the same lens over the
-    // same frame (docs/space.md "Lens", Rule 38), so a pixel goes where it was in the guest's picture.
-    const float left = 2.0f * h.cropX / h.fullWidth - 1.0f, right = 2.0f * (h.cropX + h.width) / h.fullWidth - 1.0f;
+    // Its crop's place in the picture: both games draw the same flight camera with the same 30-degree vertical
+    // lens over their own frames (docs/space.md "Lens"), so a direction keeps its height on screen and its sideways
+    // place scales with the frames' aspects (FF7 and FF8 draw at 1.600, FF9 at 1.547), times the host's own
+    // horizontal stretch (FF8 on the ground; the layers themselves are always square).
+    const float aspects = ((float)h.fullWidth / h.fullHeight) / ((float)framebufferWidth / framebufferHeight);
+    const float across = aspects * hostXScale;
+    const float left = (2.0f * h.cropX / h.fullWidth - 1.0f) * across, right = (2.0f * (h.cropX + h.width) / h.fullWidth - 1.0f) * across;
     const float top = 1.0f - 2.0f * h.cropY / h.fullHeight, bottom = 1.0f - 2.0f * (h.cropY + h.height) / h.fullHeight;
     bgfx::TransientVertexBuffer vertices;
     bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);
