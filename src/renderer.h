@@ -423,11 +423,13 @@ private:
         uint32_t requestedFrame = 0;
         int64_t requestedAt = 0;            // QueryPerformanceCounter
         float depths[2] = { 0.0f, 0.0f };   // the game's depth at 30,000 and 60,000 units then
+        uint16_t cropX = 0, cropY = 0;      // where its crop was taken in the layer target
         std::vector<uint8_t> colour;
         std::vector<float> depth;
     };
     FfuLayerSlot ffuLayerSlots[3];
     uint16_t ffuLayerWidth = 0, ffuLayerHeight = 0;
+    uint16_t ffuLayerReadWidth = 0, ffuLayerReadHeight = 0;   // the crop read back each frame
     bool ffuLayerActive = false;
     uint32_t ffuLastFrame = 0;
     RendererState ffuLayerState;            // the state the captured draws were made with

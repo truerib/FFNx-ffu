@@ -23,6 +23,9 @@
 
 #include <windows.h>
 #include <cstring>
+#include <algorithm>
+#include <climits>
+#include <cstdio>
 #include <cstdlib>
 
 #include "renderer.h"
@@ -33,19 +36,25 @@ namespace
     constexpr uint32_t LAYER_MAGIC = 0x5259414Cu;   // 'LAYR', as spikes/live-layer-transport/layer_shm.h
     struct LayerHeader   // 64 bytes, no implicit padding; then RGBA8 colour rows, then float depth rows
     {
-        uint32_t magic, version;
+        uint32_t magic, version;          // version 3
         volatile LONG seq;                // odd while being written
-        uint32_t width, height;
+        uint32_t width, height;           // the crop that follows
         uint32_t frame;
-        uint32_t fullWidth, fullHeight;   // the internal framebuffer the layer is a scaled copy of
+        uint32_t fullWidth, fullHeight;   // the layer target (FF7's picture) the crop was taken from
         int64_t stamp, frequency;         // QueryPerformanceCounter when published
-        float reserved[4];
+        float depthAt30k, depthAt60k;     // to turn the layer's depth (WorldDepth, FFNx.ffu7.sh) back into
+        float farEnd;                     // a view distance: the game's depth there, and which end is far
+        uint16_t cropX, cropY;            // where the crop sits in the target (top-left, pixels)
     };
     static_assert(sizeof(LayerHeader) == 64, "the reader expects a 64-byte header");
 
     uint8_t *shared = nullptr;
     size_t sharedSize = 0;
     LARGE_INTEGER frequency;
+    // The crop read back each frame: the box round the airship, at the layer's full resolution. It follows the
+    // airship from the alpha of the last frames (the chase camera always looks at it, so it hardly moves).
+    uint16_t cropWidth = 1280, cropHeight = 800;
+    float cropCentre[2] = { -1.0f, -1.0f };
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
     uint32_t framesWaitedTotal = 0, published = 0, skipped = 0;
 
@@ -67,6 +76,9 @@ namespace
             const char *value = getenv("FFU_FF7_LAYER");
             wanted = value && value[0] == '1';
             QueryPerformanceFrequency(&frequency);
+            const char *crop = getenv("FFU_FF7_LAYER_CROP");   // WxH (tests)
+            unsigned w = 0, h = 0;
+            if (crop && sscanf(crop, "%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 && w <= 4096 && h <= 4096) { cropWidth = (uint16_t)w; cropHeight = (uint16_t)h; }
         }
         return wanted == 1;
     }
@@ -123,7 +135,10 @@ void Renderer::ffuLayerRender()
 bool Renderer::ffuLayerBegin()
 {
     if (!layerWanted() || ffuLayerActive) return false;
-    const uint16_t width = framebufferWidth / 2, height = framebufferHeight / 2;
+    static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests)
+    if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : 1; }
+    const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
+    const uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
     if (!bgfx::isValid(ffuLayerFrameBuffer) || width != ffuLayerWidth || height != ffuLayerHeight)
     {
         if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
@@ -136,15 +151,18 @@ bool Renderer::ffuLayerBegin()
         ffuLayerFrameBuffer = bgfx::createFrameBuffer(2, targets, true);
         for (auto &slot : ffuLayerSlots)
         {
-            slot.read[0] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-            slot.read[1] = bgfx::createTexture2D(width, height, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
-            slot.colour.assign((size_t)width * height * 4, 0);
-            slot.depth.assign((size_t)width * height, 0.0f);
+            slot.read[0] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+            slot.read[1] = bgfx::createTexture2D(readWidth, readHeight, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_TEXTURE_READ_BACK);
+            slot.colour.assign((size_t)readWidth * readHeight * 4, 0);
+            slot.depth.assign((size_t)readWidth * readHeight, 0.0f);
             slot.pending = 0;
         }
         ffuLayerWidth = width;
         ffuLayerHeight = height;
-        ffnx_info("FFU layer: %ux%u target (half of %ux%u)\n", width, height, framebufferWidth, framebufferHeight);
+        ffuLayerReadWidth = readWidth;
+        ffuLayerReadHeight = readHeight;
+        cropCentre[0] = cropCentre[1] = -1.0f;
+        ffnx_info("FFU layer: %ux%u target (1/%d of %ux%u), %ux%u crop read back\n", width, height, scale, framebufferWidth, framebufferHeight, readWidth, readHeight);
     }
     ++backendViewId;
     ffuLayerViews[0] = backendViewId;
@@ -167,8 +185,16 @@ void Renderer::ffuLayerEnd()
     FfuLayerSlot *slot = nullptr;
     for (auto &candidate : ffuLayerSlots) if (candidate.pending == 0) { slot = &candidate; break; }
     if (!slot) { ++skipped; return; }   // three already in flight
-    bgfx::blit(backendViewId, {.handle = slot->read[0]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0)});
-    bgfx::blit(backendViewId, {.handle = slot->read[1]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1)});
+    // The crop: centred on the airship as last seen (until then a little below the middle, where the chase
+    // camera puts it), inside the target.
+    const float centreX = cropCentre[0] >= 0.0f ? cropCentre[0] : ffuLayerWidth * 0.5f;
+    const float centreY = cropCentre[1] >= 0.0f ? cropCentre[1] : ffuLayerHeight * 0.65f;
+    slot->cropX = (uint16_t)std::clamp((int)(centreX - ffuLayerReadWidth * 0.5f), 0, ffuLayerWidth - ffuLayerReadWidth);
+    slot->cropY = (uint16_t)std::clamp((int)(centreY - ffuLayerReadHeight * 0.5f), 0, ffuLayerHeight - ffuLayerReadHeight);
+    const bgfx::TextureRegion colourFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
+    const bgfx::TextureRegion depthFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
+    bgfx::blit(backendViewId, {.handle = slot->read[0]}, colourFrom);
+    bgfx::blit(backendViewId, {.handle = slot->read[1]}, depthFrom);
     bgfx::touch(backendViewId);
     slot->pending = bgfx::read({.handle = slot->read[0]}, slot->colour.data());
     bgfx::read({.handle = slot->read[1]}, slot->depth.data());
@@ -203,26 +229,25 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
 {
     LARGE_INTEGER ready, done;
     QueryPerformanceCounter(&ready);
-    const size_t pixels = (size_t)ffuLayerWidth * ffuLayerHeight;
+    const size_t pixels = (size_t)ffuLayerReadWidth * ffuLayerReadHeight;
     uint8_t *base = mapShared(sizeof(LayerHeader) + pixels * 8);
     if (base)
     {
         LayerHeader *header = (LayerHeader *)base;
         InterlockedIncrement(&header->seq);   // odd: writing
         header->magic = LAYER_MAGIC;
-        header->version = 2;
-        header->width = ffuLayerWidth;
-        header->height = ffuLayerHeight;
-        header->fullWidth = framebufferWidth;
-        header->fullHeight = framebufferHeight;
+        header->version = 3;
+        header->width = ffuLayerReadWidth;
+        header->height = ffuLayerReadHeight;
+        header->fullWidth = ffuLayerWidth;
+        header->fullHeight = ffuLayerHeight;
         header->frame = slot.pending;
         header->frequency = frequency.QuadPart;
-        // To turn the layer's depth (WorldDepth, FFNx.ffu7.sh) back into view distance: the game's depth at
-        // 30,000 and 60,000 units and which end of the range is far.
-        header->reserved[0] = slot.depths[0];
-        header->reserved[1] = slot.depths[1];
-        header->reserved[2] = slot.depths[1] < slot.depths[0] ? 0.0f : 1.0f;
-        header->reserved[3] = 0.0f;
+        header->depthAt30k = slot.depths[0];
+        header->depthAt60k = slot.depths[1];
+        header->farEnd = slot.depths[1] < slot.depths[0] ? 0.0f : 1.0f;
+        header->cropX = slot.cropX;
+        header->cropY = slot.cropY;
         ::memcpy(base + sizeof(LayerHeader), slot.colour.data(), pixels * 4);
         ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
@@ -235,12 +260,26 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     readbackTotal += readback; if (readback > readbackMax) readbackMax = readback;
     publishTotal += publish; if (publish > publishMax) publishMax = publish;
     framesWaitedTotal += ffuLastFrame - slot.requestedFrame;
+    // Where the airship is now (its alpha's box, every 2nd pixel): the next crops follow it.
+    int minX = INT_MAX, minY = INT_MAX, maxX = -1, maxY = -1;
+    for (int y = 0; y < ffuLayerReadHeight; y += 2)
+        for (int x = 0; x < ffuLayerReadWidth; x += 2)
+            if (slot.colour[((size_t)y * ffuLayerReadWidth + x) * 4 + 3])
+            {
+                minX = std::min(minX, x); maxX = std::max(maxX, x);
+                minY = std::min(minY, y); maxY = std::max(maxY, y);
+            }
+    if (maxX >= 0)
+    {
+        cropCentre[0] = slot.cropX + (minX + maxX) * 0.5f;
+        cropCentre[1] = slot.cropY + (minY + maxY) * 0.5f;
+    }
     if (++published % 120 == 0)
     {
         size_t covered = 0;
         for (size_t i = 3; i < slot.colour.size(); i += 4) covered += slot.colour[i] != 0;
-        ffnx_info("FFU layer: %u readbacks of %ux%u: request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); %u skipped (ring full); last frame %.1f%% covered; depth at 30k/60k %.6f/%.6f\n",
-                  published, ffuLayerWidth, ffuLayerHeight, readbackTotal / 120, readbackMax, framesWaitedTotal / 120.0,
+        ffnx_info("FFU layer: %u readbacks of %ux%u (at %u,%u): request to ready %.2f ms mean (%.2f max), %.2f frames; publish %.2f ms mean (%.2f max); %u skipped (ring full); last frame %.1f%% covered; depth at 30k/60k %.6f/%.6f\n",
+                  published, ffuLayerReadWidth, ffuLayerReadHeight, slot.cropX, slot.cropY, readbackTotal / 120, readbackMax, framesWaitedTotal / 120.0,
                   publishTotal / 120, publishMax, skipped, 100.0 * covered / pixels, slot.depths[0], slot.depths[1]);
         readbackTotal = readbackMax = publishTotal = publishMax = 0;
         framesWaitedTotal = 0;
