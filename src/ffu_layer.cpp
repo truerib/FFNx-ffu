@@ -29,15 +29,15 @@
 namespace
 {
     constexpr uint32_t LAYER_MAGIC = 0x5259414Cu;   // 'LAYR', as spikes/live-layer-transport/layer_shm.h
-    struct LayerHeader
+    struct LayerHeader   // 64 bytes, no implicit padding; then RGBA8 colour rows, then float depth rows
     {
         uint32_t magic, version;
-        volatile LONG seq;
+        volatile LONG seq;                // odd while being written
         uint32_t width, height;
-        int64_t stamp, frequency;
         uint32_t frame;
         uint32_t fullWidth, fullHeight;   // the internal framebuffer the layer is a scaled copy of
-        uint32_t pad[5];
+        int64_t stamp, frequency;         // QueryPerformanceCounter when published
+        float reserved[4];
     };
     static_assert(sizeof(LayerHeader) == 64, "the reader expects a 64-byte header");
 
@@ -96,9 +96,7 @@ bool Renderer::ffuLayerBegin()
         ffuLayerWidth = width;
         ffuLayerHeight = height;
         ffuLayerPending = 0;
-        ffnx_info("FFU layer: %ux%u target (half of %ux%u), blit %s, read back %s\n", width, height, framebufferWidth, framebufferHeight,
-                  (bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) ? "yes" : "NO",
-                  (bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_READ_BACK) ? "yes" : "NO");
+        ffnx_info("FFU layer: %ux%u target (half of %ux%u)\n", width, height, framebufferWidth, framebufferHeight);
     }
     ++backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
@@ -118,11 +116,11 @@ void Renderer::ffuLayerEnd()
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     if (ffuLayerPending == 0)   // one readback in flight at a time
     {
-        bgfx::blit(backendViewId, ffuLayerRead[0], 0, 0, bgfx::getTexture(ffuLayerFrameBuffer, 0));
-        bgfx::blit(backendViewId, ffuLayerRead[1], 0, 0, bgfx::getTexture(ffuLayerFrameBuffer, 1));
+        bgfx::blit(backendViewId, {.handle = ffuLayerRead[0]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0)});
+        bgfx::blit(backendViewId, {.handle = ffuLayerRead[1]}, {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1)});
         bgfx::touch(backendViewId);
-        ffuLayerPending = bgfx::readTexture(ffuLayerRead[0], ffuLayerColour.data());
-        bgfx::readTexture(ffuLayerRead[1], ffuLayerDepth.data());
+        ffuLayerPending = bgfx::read({.handle = ffuLayerRead[0]}, ffuLayerColour.data());
+        bgfx::read({.handle = ffuLayerRead[1]}, ffuLayerDepth.data());
         QueryPerformanceCounter(&requested);
         requestedFrame = ffuLastFrame;
     }
