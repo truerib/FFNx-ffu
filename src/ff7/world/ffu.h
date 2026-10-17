@@ -50,6 +50,11 @@ namespace ffu::ff7
         // version 5: publishLayer = 1 while FF7 follows a flight of its own airship in another world (hidden): only then
         // is the live layer read back (src/ffu_layer.cpp); flying in FF7 itself there is no one to send it to.
         int32_t publishLayer;
+        // version 6: live characters (docs/crossover-design.md "Characters, live"): FF7 units per character height. While
+        // a visitor walks FF7, the visitor's height here (people slot 0 is composited from their own game's layer while it
+        // is live); while Cloud walks another world, Cloud's own height (people slot 0 then holds his clip, drawn with
+        // the camera, and is what FF7 publishes).
+        float characterUnits;
     };
 
     // Exported by the bridge as `ffu_ff7_airships[AIRSHIP_SLOTS]`: airships FFNx draws from their real models

@@ -42,6 +42,13 @@ namespace ffu::ff8world
         float east[4], up[4], north[4];
         float space;                   // 0 in the atmosphere .. 1 in space (the sky is black)
         volatile int32_t meshActive;   // written by us: the DLL then skips its own far-side fallback
+        // Live characters (docs/crossover-design.md "Characters, live"):
+        float characterUnits;          // FF8 units per character height: a visitor's (slot visible = 3) or Squall's own
+                                       //   while his clip is drawn for another world's camera (the layer's units)
+        volatile float lens[4];        // written by us: FF8's lens as it draws its own picture, in that page's terms
+                                       //   (u = fu X/Z + cu, v = fv Y/Z + cv; u right, v up, ±1 top to bottom)
+        volatile float layerLens[4];   // written by us: the live layer's lens (square pixels)
+        volatile float aspect;         // written by us: the picture's width / height
     };
 
     // Exported by the proxy dinput.dll as `ffu_ff8_airships[FF8_AIRSHIP_SLOTS]`: airships the fork draws
@@ -94,6 +101,7 @@ namespace ffu::ff8world
 
     private:
         void buildProjection(struct matrix& projection, bool squarePixels = false) const;
+        void lensTerms(bool squarePixels, float out[4], float &aspect) const;   // buildProjection's lens, in the protocol's terms
         enum class Part { World, PolarCap, OtherPlanet };
         void fillGlobeUniform(float out[24], Part part, const float* planetOffset = nullptr) const;
         void buildPolarCaps();

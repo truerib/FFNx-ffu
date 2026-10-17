@@ -126,6 +126,26 @@ namespace ffu::ff7
 
     static bool ownModel(const char *id) { return !strncmp(id, "ff7_", 4); }
 
+    // FF7 units per character height (Control v6): the visitor's in FF7, or Cloud's own while he walks elsewhere.
+    static float characterUnits()
+    {
+        const Control *c = control();
+        return c && c->version >= 6 && c->characterUnits > 0.0f ? c->characterUnits : 0.0f;
+    }
+
+    // A character clip's id ("ff7_cloud_run", tools/airships) -> the character it shows ("ff7_cloud"): what the layer
+    // says it shows, so the host matches it with its stand-in. An airship's id stays as it is.
+    static void layerId(const char *id, char (&out)[sizeof(Airship::id)])
+    {
+        strncpy(out, id, sizeof(out) - 1);
+        out[sizeof(out) - 1] = 0;
+        for (const char *clip : { "_idle", "_walk", "_run" })
+        {
+            const size_t length = strlen(out), tail = strlen(clip);
+            if (length > tail && !strcmp(out + length - tail, clip)) { out[length - tail] = 0; break; }
+        }
+    }
+
     // FF7 units per planet radius for the flight camera this frame (the bridge's, or the globe's radius).
     static float unitsPerR()
     {
@@ -188,16 +208,16 @@ namespace ffu::ff7
         layerShips.clear();
     }
 
-    // Every model slot the bridge filled: the airships, then the people (a visitor's stand-in, Cloud as an NPC).
-    // An airship from another game whose own game is sending its live layer isn't drawn here: that layer is
-    // composited instead (src/ffu_layer.cpp, Rule 64).
+    // Every model slot the bridge filled: the airships, then the people (a visitor's stand-in, Cloud as an NPC, or
+    // Cloud's own clip while he walks another world). An airship or a visitor from another game whose own game is
+    // sending its live layer isn't drawn here: that layer is composited instead (src/ffu_layer.cpp, Rule 64).
     static void drawAirships()
     {
         const Airship *ships = bridgeAirships();
         if (!ships || !newRenderer.isFF7GlobeActive()) return;
         const Airship *people = bridgePeople();
         const Airship *slots[AIRSHIP_SLOTS + PEOPLE_SLOTS] = {};
-        bool live[AIRSHIP_SLOTS] = {};
+        bool live[AIRSHIP_SLOTS + PEOPLE_SLOTS] = {};
         for (int i = 0; i < AIRSHIP_SLOTS; ++i) slots[i] = &ships[i];
         for (int i = 0; i < PEOPLE_SLOTS && people; ++i) slots[AIRSHIP_SLOTS + i] = &people[i];
 
@@ -210,8 +230,11 @@ namespace ffu::ff7
             const Airship &ship = *slots[i];
             if (ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) continue;
             // Only a guest flying with the camera is its own game's live layer: a parked one is still a copy (its game is
-            // frozen), and swapping it for the last flying frame drew it in the wrong place for a moment.
-            const bool composited = i < AIRSHIP_SLOTS && ship.mode == AIRSHIP_WITH_CAMERA && !ownModel(ship.id) && newRenderer.ffuLayerLive(ship.id);
+            // frozen), and swapping it for the last flying frame drew it in the wrong place for a moment. A visitor on foot
+            // (people slot 0) is their game's layer while it is live (docs/crossover-design.md "Characters, live").
+            const bool flyingGuest = i < AIRSHIP_SLOTS && ship.mode == AIRSHIP_WITH_CAMERA;
+            const bool visitor = i == AIRSHIP_SLOTS && characterUnits() > 0.0f;
+            const bool composited = (flyingGuest || visitor) && !ownModel(ship.id) && newRenderer.ffuLayerLive(ship.id);
             ExternalMesh *model = composited ? nullptr : airshipMesh(ship.id);
             if (!model && !composited) continue;
             if (!stateSet)
@@ -237,23 +260,35 @@ namespace ffu::ff7
             else drawAirship(ship, model, &view);
         }
         if (!stateSet) return;
-        for (int i = 0; i < AIRSHIP_SLOTS; ++i)
-            if (live[i]) newRenderer.ffuLayerComposite(ships[i].id, Renderer::FFU_LAYER_DEPTH_FF7, unitsPerR());
+        for (int i = 0; i < AIRSHIP_SLOTS + PEOPLE_SLOTS; ++i)
+            if (live[i]) newRenderer.ffuLayerComposite(slots[i]->id, Renderer::FFU_LAYER_DEPTH_FF7, i < AIRSHIP_SLOTS ? unitsPerR() : characterUnits());
         // The live layer (FFU_FF7_LAYER=1, src/ffu_layer.cpp): FF7's own airship again, alone, at the end of the
         // frame, into the layer target another game composites (docs/crossover-design.md). Guests aren't in it:
-        // they are their own games' to send.
+        // they are their own games' to send. While Cloud walks another world, it is his clip from that world's camera
+        // (people slot 0, with the camera), in FF7 units per his height.
         const Control *c = control();
         if (newRenderer.ffuLayerWanted() && c && c->version >= 5 && c->publishLayer)
         {
             layerShips.clear();
-            for (int i = 0; i < AIRSHIP_SLOTS; ++i)
+            const Airship *person = people && people[0].mode == AIRSHIP_WITH_CAMERA && ownModel(people[0].id) && characterUnits() > 0.0f ? &people[0] : nullptr;
+            if (person)
             {
-                const Airship &ship = ships[i];
-                if ((ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) || !ownModel(ship.id)) continue;
-                if (ExternalMesh *model = airshipMesh(ship.id)) layerShips.push_back({ ship, model });
+                if (ExternalMesh *model = airshipMesh(person->id)) layerShips.push_back({ *person, model });
             }
+            else
+                for (int i = 0; i < AIRSHIP_SLOTS; ++i)
+                {
+                    const Airship &ship = ships[i];
+                    if ((ship.mode != AIRSHIP_WITH_CAMERA && ship.mode != AIRSHIP_ON_PLANET) || !ownModel(ship.id)) continue;
+                    if (ExternalMesh *model = airshipMesh(ship.id)) layerShips.push_back({ ship, model });
+                }
             layerView = view;
-            if (!layerShips.empty()) newRenderer.ffuLayerCapture(&drawLayerShips, layerShips[0].ship.id, unitsPerR(), Renderer::FFU_LAYER_DEPTH_FF7);
+            if (!layerShips.empty())
+            {
+                char id[sizeof(Airship::id)];
+                layerId(layerShips[0].ship.id, id);
+                newRenderer.ffuLayerCapture(&drawLayerShips, id, person ? characterUnits() : unitsPerR(), Renderer::FFU_LAYER_DEPTH_FF7);
+            }
         }
         newRenderer.discardAllBindings();
         newRenderer.setSphericalWorldRate(0.0f);

@@ -318,6 +318,12 @@ namespace ffu::ff8world
         {
             cam.globe = *dllGlobe;
             dllGlobe->meshActive = replacesTerrain() ? 1 : 0;
+            // For the DLL's live characters: FF8's lens as it draws its picture and as its live layer does.
+            float lens[4], layerLens[4], aspect = 1.6f;
+            lensTerms(false, lens, aspect);
+            lensTerms(true, layerLens, aspect);
+            for (int i = 0; i < 4; ++i) { dllGlobe->lens[i] = lens[i]; dllGlobe->layerLens[i] = layerLens[i]; }
+            dllGlobe->aspect = aspect;
         }
         cam.valid = true;
     }
@@ -355,6 +361,27 @@ namespace ffu::ff8world
         lens._33 = 1.0f;
         lens._34 = 1.0f;   // w = view z
         multiply_matrix(&rotation, &lens, &projection);
+    }
+
+    // buildProjection's lens for a point (X right, Y up, Z ahead) of the camera's frame, in the terms of
+    // docs/crossover-design.md "Characters, live": u = fu X/Z + cu, v = fv Y/Z + cv, v = ±1 at the picture's top and bottom
+    // and u in the same units (± the aspect at its sides). FF8's own picture is stretched sideways near the ground (fu > fv).
+    void Renderer::lensTerms(bool squarePixels, float out[4], float &aspect) const
+    {
+        const float scaleX = *(const float *)SSIGPU_SCALE_X * 8.0f, scaleY = *(const float *)SSIGPU_SCALE_Y * 8.0f;
+        const float offsetX = *(const float *)SSIGPU_OFFSET_X, offsetY = *(const float *)SSIGPU_OFFSET_Y;
+        const float left = widescreen_enabled ? float(*ff8_externals.ssigpu_viewport_x_dword_1CA89D8) : 0.0f;
+        const float width = widescreen_enabled ? float(*ff8_externals.ssigpu_viewport_width_dword_B7CBF8) : float(game_width);
+        const float height = float(game_height);
+        aspect = height > 0.0f ? width / height : 1.6f;
+        float x = 2.0f * scaleX * cam.H / width;
+        const float squareShare = squarePixels ? 1.0f : cam.globe.space;
+        if (cam.hasGlobe && scaleX > 0.0f) x *= 1.0f + squareShare * (scaleY / scaleX - 1.0f);
+        // ndc x = x X/Z + cx; ndc y = -(-2 scaleY H / height) Y/Z + cy, the view's y being down (buildProjection).
+        out[0] = x * aspect;
+        out[1] = 2.0f * scaleY * cam.H / height;
+        out[2] = (2.0f * (offsetX + scaleX * cam.ofx - left) / width - 1.0f) * aspect;
+        out[3] = 1.0f - 2.0f * (offsetY + scaleY * cam.ofy) / height;
     }
 
     void Renderer::fillGlobeUniform(float out[24], Part part, const float* planetOffset) const
@@ -736,35 +763,58 @@ namespace ffu::ff8world
         newRenderer.setWorldViewMatrix(&identity, false);
     }
 
-    // Every pose the proxy filled: FF8's own airship, a guest, Squall as an NPC, a visitor's stand-in. A guest
-    // airship whose own game is sending its live layer isn't drawn here: that layer is composited instead
-    // (src/ffu_layer.cpp, Rule 64). FF8's own airships also go into FF8's layer when FFU_FF8_LAYER=1.
+    // Every pose the proxy filled: FF8's own airship, a guest, Squall as an NPC, a visitor's stand-in, or Squall's own clip
+    // for another world's camera. A guest airship or visitor whose own game is sending its live layer isn't drawn here:
+    // that layer is composited instead (src/ffu_layer.cpp, Rule 64). FF8's own airships, or Squall's clip, also go into
+    // FF8's layer when FFU_FF8_LAYER=1 (docs/crossover-design.md "Characters, live").
     void Renderer::drawAirships()
     {
         if (!cam.hasGlobe) return;
         // FF8 units per planet radius as drawn: the globe's radius at the camera, times the climb's virtual scale.
         const float unitsPerR = cam.globe.radius * cam.globe.scale;
-        std::vector<const char *> live;
+        std::vector<const char *> live, liveCharacters;
         layerPoses.clear();
+        const AirshipPose *clip = nullptr;   // Squall's own clip, drawn for another world's camera
         for (const auto &pose : cam.airships)
         {
             if (!pose.visible || !pose.id[0]) continue;
             const bool own = !strncmp(pose.id, "ff8_", 4);
             // Only a guest flying with the camera (the proxy's visible = 2) is its own game's live layer; a parked one
-            // is still a copy (its game is frozen by then).
+            // is still a copy (its game is frozen by then). A visitor on foot (visible = 3) is their game's layer while
+            // it is live.
             if (!own && pose.visible == 2 && newRenderer.ffuLayerLive(pose.id)) { live.push_back(pose.id); continue; }
+            if (!own && pose.visible == 3 && cam.globe.characterUnits > 0.0f && newRenderer.ffuLayerLive(pose.id)) { liveCharacters.push_back(pose.id); continue; }
             ExternalMesh *model = airshipMesh(pose.id);
             if (!model) continue;
             drawAirship(pose, model);
-            // Characters (Squall as an NPC) aren't airships: the layer carries the flown ship only.
-            if (own && strcmp(pose.id, "ff8_squall") && newRenderer.ffuLayerWanted()) layerPoses.push_back(pose);
+            const size_t length = strlen(pose.id);
+            const bool isClip = own && ((length > 5 && !strcmp(pose.id + length - 5, "_idle")) || (length > 5 && !strcmp(pose.id + length - 5, "_walk"))
+                                        || (length > 4 && !strcmp(pose.id + length - 4, "_run")));
+            if (isClip) clip = &pose;
+            // Characters (Squall as an NPC) aren't airships: the layer carries the flown ship, or Squall's clip.
+            else if (own && strcmp(pose.id, "ff8_squall") && newRenderer.ffuLayerWanted()) layerPoses.push_back(pose);
+        }
+        if (clip && newRenderer.ffuLayerWanted() && cam.globe.characterUnits > 0.0f)
+        {
+            layerPoses.clear();
+            layerPoses.push_back(*clip);
         }
         // FF8 stretches its own picture sideways near the ground (buildProjection); the layers are square.
         const float scaleX = *(const float *)SSIGPU_SCALE_X, scaleY = *(const float *)SSIGPU_SCALE_Y;
         const float ratio = scaleX > 0.0f ? scaleY / scaleX : 1.0f;
         const float xScale = (1.0f + cam.globe.space * (ratio - 1.0f)) / ratio;
         for (const char *id : live) newRenderer.ffuLayerComposite(id, ::Renderer::FFU_LAYER_DEPTH_FF8, unitsPerR, xScale);
-        if (!layerPoses.empty() && cam.globe.publishLayer > 0.5f) newRenderer.ffuLayerCapture(&Renderer::drawLayerShips, layerPoses[0].id, unitsPerR, ::Renderer::FFU_LAYER_DEPTH_FF8);
+        // A visitor's layer was drawn with FF8's own lens, stretch included (the DLL sends it): placed by aspect only.
+        for (const char *id : liveCharacters) newRenderer.ffuLayerComposite(id, ::Renderer::FFU_LAYER_DEPTH_FF8, cam.globe.characterUnits, 1.0f);
+        if (!layerPoses.empty() && cam.globe.publishLayer > 0.5f)
+        {
+            // A clip's layer says which character it shows ("ff8_squall_run" -> "ff8_squall"), in FF8 units per his height.
+            char id[sizeof(AirshipPose::id)];
+            strncpy(id, layerPoses[0].id, sizeof(id) - 1);
+            id[sizeof(id) - 1] = 0;
+            if (clip) *strrchr(id, '_') = 0;
+            newRenderer.ffuLayerCapture(&Renderer::drawLayerShips, id, clip ? cam.globe.characterUnits : unitsPerR, ::Renderer::FFU_LAYER_DEPTH_FF8);
+        }
         struct matrix identity;
         identity_matrix(&identity);
         newRenderer.setWorldViewMatrix(&identity, false);
