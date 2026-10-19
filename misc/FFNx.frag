@@ -40,7 +40,7 @@ uniform vec4 FSMiscFlags;
 uniform vec4 FSHDRFlags;
 uniform vec4 FSTexFlags;
 uniform vec4 WMFlags;
-uniform vec4 ff8Globe[6];   // Final Fantasy Universe: FF8 world-mesh globe state (FFNx.vert)
+uniform vec4 ff8Globe[9];   // Final Fantasy Universe: FF8 world-mesh globe state (FFNx.vert)
 uniform vec4 TimeColor;
 uniform vec4 TimeData;
 uniform vec4 gameLightingFlags;

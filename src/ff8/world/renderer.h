@@ -103,7 +103,7 @@ namespace ffu::ff8world
         void buildProjection(struct matrix& projection, bool squarePixels = false) const;
         void lensTerms(bool squarePixels, float out[4], float &aspect) const;   // buildProjection's lens, in the protocol's terms
         enum class Part { World, PolarCap, OtherPlanet };
-        void fillGlobeUniform(float out[24], Part part, const float* planetOffset = nullptr) const;
+        void fillGlobeUniform(float out[36], Part part, const float* planetOffset = nullptr) const;
         void buildPolarCaps();
         void loadOtherPlanets();
         void buildUnitSphere();

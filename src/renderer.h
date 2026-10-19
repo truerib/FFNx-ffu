@@ -326,7 +326,7 @@ private:
         std::vector<float> FSHDRFlags;
         std::vector<float> FSTexFlags;
         std::vector<float> WMFlags;
-        float ff8Globe[24] = {};
+        float ff8Globe[36] = {};
         float ff7Globe[8] = {};
         float ff8WorldMeshMode = 0.0f;    // 1 world mesh, 2 atmosphere, 3 clouds (FFNx.frag)
         float ff8CloudDrift = 0.0f;       // turns of the cloud map round the planet (docs/space.md "Clouds")

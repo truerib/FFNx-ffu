@@ -50,6 +50,8 @@ namespace ffu::ff8world
         constexpr uint32_t CURVE_START     = 0xC75CFC;
         constexpr uint32_t SSIGPU_SCALE_X  = 0xB7CC14;    // vw / draw area width / 8, set by PutDrawEnv
         constexpr uint32_t SSIGPU_SCALE_Y  = 0xB7CC18;
+        constexpr uint32_t FF8_ZONE_BACK   = 0x204DA18;   // u8 R, G, B: the zone's back colour this frame (GTE BK >> 4)
+        constexpr uint32_t FF8_ZONE_MATRIX = 0x204DA20;   // s16[3][3]: its colour matrix (GTE LCM), rows R, G, B
         constexpr uint32_t SSIGPU_OFFSET_X = 0x1CA89E0;
         constexpr uint32_t SSIGPU_OFFSET_Y = 0x1CA89E4;
         constexpr uint32_t FRAME_DRAWN     = 0xB7CC24;    // 0 when FF8 skips drawing this frame
@@ -384,9 +386,22 @@ namespace ffu::ff8world
         out[3] = 1.0f - 2.0f * (offsetY + scaleY * cam.ofy) / height;
     }
 
-    void Renderer::fillGlobeUniform(float out[24], Part part, const float* planetOffset) const
+    void Renderer::fillGlobeUniform(float out[36], Part part, const float* planetOffset) const
     {
-        ::memset(out, 0, sizeof(float) * 24);
+        ::memset(out, 0, sizeof(float) * 36);
+        // [6..8] FF8's zone light this world frame (0x555480 blends it in: docs/research/ff8-world-lighting-2026-10-19.md):
+        // the colour matrix's rows R, G, B (s16, 4096 = 1.0, 0x204DA20) and the back colour (u8 R, G, B, 0x204DA18).
+        // The shader lights the terrain with them as FF8's NCCT does (FF8ZoneLight); zero until FF8 has set them.
+        if (part == Part::World)
+        {
+            const int16_t *matrix = (const int16_t *)FF8_ZONE_MATRIX;
+            const uint8_t *back = (const uint8_t *)FF8_ZONE_BACK;
+            for (int c = 0; c < 3; ++c)
+            {
+                for (int j = 0; j < 3; ++j) out[24 + 4 * c + j] = float(matrix[3 * c + j]) / 4096.0f;
+                out[24 + 4 * c + 3] = float(back[c]);
+            }
+        }
         // Camera position in the mesh's space (FF8's G space), for the flat and FF8-bend modes.
         const float cameraX = float(cam.refBlockX) * 2048.0f - float(cam.c[0]);
         const float cameraY = -float(cam.c[1]);
@@ -491,7 +506,7 @@ namespace ffu::ff8world
         newRenderer.setD3DViweport(&identity);
         newRenderer.setD3DProjectionRaw(&projection);
         newRenderer.setWorldViewMatrix(&identity, false);
-        float globe[24];
+        float globe[36];
         fillGlobeUniform(globe, Part::World);
         globe[6] = 7.0f;
         globe[20] = fade;
@@ -583,7 +598,7 @@ namespace ffu::ff8world
         newRenderer.setD3DViweport(&identity);
         newRenderer.setD3DProjectionRaw(&projection);
         newRenderer.setWorldViewMatrix(&identity, false);
-        float globe[24];
+        float globe[36];
         fillGlobeUniform(globe, Part::World);
         const bool shadows = bgfx::isValid(ownClouds) && cloudFade() > 0.0f;   // as on the opaque terrain
         globe[20] = shadows ? cloudFade() : 0.0f;
@@ -615,7 +630,7 @@ namespace ffu::ff8world
         newRenderer.setD3DViweport(&identity);
         newRenderer.setD3DProjectionRaw(&projection);
         newRenderer.setWorldViewMatrix(&identity, false);
-        float globe[24];
+        float globe[36];
         fillGlobeUniform(globe, Part::World);
         globe[6] = 6.0f;
         // The shell always encloses the camera, so every sky pixel is covered exactly once.
@@ -639,7 +654,7 @@ namespace ffu::ff8world
         newRenderer.doTextureFiltering(true);
         for (const auto &planet : otherPlanets)
         {
-            float globe[24];
+            float globe[36];
             fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
             newRenderer.setFF8WorldMesh(true, globe);
             newRenderer.setCommonUniforms();
@@ -693,7 +708,7 @@ namespace ffu::ff8world
         newRenderer.setWorldViewMatrix(&identity, false);
         for (const auto &planet : otherPlanets)
         {
-            float globe[24];
+            float globe[36];
             fillGlobeUniform(globe, Part::OtherPlanet, planet.offset);
             globe[6] = 9.0f;
             newRenderer.setFF8WorldMesh(true, globe, 4.0f);
@@ -722,7 +737,7 @@ namespace ffu::ff8world
             place.m[3][row] = pose.model[row * 4 + 3];
         }
         place._44 = 1.0f;
-        float globe[24];
+        float globe[36];
         fillGlobeUniform(globe, Part::World);
         globe[6] = 5.0f;
         newRenderer.setWorldViewMatrix(&place, false);
@@ -935,7 +950,7 @@ namespace ffu::ff8world
 
         newRenderer.ffuLayerPrepare();   // once: the live layer's target and reads, before any flight needs them
         animateTextures();
-        float globe[24];
+        float globe[36];
         fillGlobeUniform(globe, Part::World);
         const bool shadows = bgfx::isValid(ownClouds) && cloudFade() > 0.0f;
         globe[20] = shadows ? cloudFade() : 0.0f;   // cloud shadows on the terrain (FFNx.frag)
