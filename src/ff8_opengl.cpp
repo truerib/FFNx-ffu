@@ -20,6 +20,7 @@
 /****************************************************************************/
 
 #include "globals.h"
+#include "ffu_layout.h"
 #include "common.h"
 #include "ff8.h"
 #include "fake_dd.h"
@@ -1082,6 +1083,10 @@ int ff8_draw_gamepad_icon_or_keyboard_key(int a1, ff8_draw_menu_sprite_texture_i
 			}
 
 			int rgbButton = val - 224;
+
+			// The universe's unified controls swap Triangle and Circle before FF8 reads them: the icons follow
+			if (ffu_pad_layout() == 1 && (rgbButton == 2 || rgbButton == 3))
+				rgbButton = rgbButton == 2 ? 3 : 2;
 
 			switch (rgbButton)
 			{

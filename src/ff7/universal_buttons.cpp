@@ -9,6 +9,7 @@
 #include "../log.h"
 #include "../renderer.h"
 #include "../saveload.h"
+#include "../ffu_layout.h"
 #include "../sdl_gamepad.h"
 #include "../utils.h"
 
@@ -251,6 +252,9 @@ static bool resource_available(prompt_atlas atlas)
 
 static prompt_atlas select_prompt_atlas()
 {
+  // Unified controls: PlayStation buttons whatever the pad reports (the universe's DualSense reaches FF7 as XInput)
+  if (ffu_pad_layout() == 1 && (xinput_connected || gamepad.CheckConnection() || joystick.CheckConnection()))
+    return prompt_atlas::playstation;
   if (use_sdl_gamepad)
   {
     if (!sdlgamepad.CheckConnection())
@@ -628,7 +632,7 @@ static bool submit_prompt_quad(const prompt_sprite& sprite, float x, float y, fl
   return true;
 }
 
-static int controller_button_for_binding(int binding)
+static int controller_button_for_binding_original(int binding)
 {
   static constexpr byte controller_button_map[] = { 7, 6, 5, 4, 2, 3, 0, 1, 8, 11 };
   switch (binding)
@@ -645,8 +649,31 @@ static int controller_button_for_binding(int binding)
   }
 }
 
+// Unified controls swap Cross and Circle before FF7 reads them, so its prompts show the other one (glyphs 5, 6).
+static int controller_button_for_binding(int binding)
+{
+  const int button = controller_button_for_binding_original(binding);
+  if (ffu_pad_layout() == 1 && (button == 5 || button == 6))
+    return button == 5 ? 6 : 5;
+  return button;
+}
+
+// The atlas follows a change of the unified switch or the pad while the game runs, looked at twice a second.
+static void refresh_prompt_atlas()
+{
+  static DWORD last = 0;
+  const DWORD now = GetTickCount();
+  if (now - last < 500)
+    return;
+  last = now;
+  const prompt_atlas atlas = select_prompt_atlas();
+  if (atlas != current_prompt_atlas && resource_available(atlas))
+    current_prompt_atlas = atlas;
+}
+
 int universal_buttons_draw_field_prompt(int button, int x, int y, float z)
 {
+  refresh_prompt_atlas();
   prompt_sprite sprite;
   if (current_prompt_atlas == prompt_atlas::keyboard)
   {
@@ -686,6 +713,7 @@ int universal_buttons_draw_field_prompt(int button, int x, int y, float z)
 
 int universal_buttons_draw_menu_prompt(int button, int x, int y, float z)
 {
+  refresh_prompt_atlas();
   prompt_sprite sprite;
   if (current_prompt_atlas == prompt_atlas::keyboard)
   {
