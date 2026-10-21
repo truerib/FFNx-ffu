@@ -58,9 +58,7 @@ uniform vec4 WMFlags;
 //  [4] globe: north axis
 //  [5] other planet: its centre minus FF8's (solar frame, planet radii, docs/space.md), game units per radius
 //      world mesh / cloud shell: x = cloud fade, w = shell height (game units)
-//  [6..8] the terrain: FF8's zone light this frame, its colour matrix's rows R, G, B (xyz, 4096 = 1.0) and back colour
-//      (w, 0-255); all zero before FF8 has set them (then the baked default light stays)
-uniform vec4 ff8Globe[9];
+uniform vec4 ff8Globe[6];
 
 #define isTLVertex VSFlags.x > 0.0
 #define blendMode VSFlags.y
@@ -147,25 +145,6 @@ vec3 FF8Bend(vec3 p)
 
 // FF8's TL depth (0x461210): linear in view z, z = floor(round(zv) / 8) * 1.5235901e-5 + 0.0015,
 // continued past FF8's 0x8000 limit by a log band, so the far side of the planet still sorts.
-// FF8's own vertex light on its world's terrain (its NCCT, 0x4604C0, then the PC's colour step 0x460D20:
-// docs/research/ff8-world-lighting-2026-10-19.md), with this frame's zone (ff8Globe[6..8]) and FF8's constant light
-// matrix (0xC76808) on the stored normal (G space, unit), so Dollet's dusk, Deling City's night and the rest light the
-// ground as FF8's own blocks do. The polygon's shade comes back from the baked default-zone flat colour (tools/ff8world
-// default_light: shades 128, 100, 90, 80 bake to 1, 0.933, 0.839, 0.745).
-vec3 FF8ZoneLight(vec3 normal, float baked)
-{
-    float shade = baked > 0.97 ? 128.0 : (baked > 0.886 ? 100.0 : (baked > 0.79 ? 90.0 : 80.0));
-    vec3 l = max(vec3_splat(0.0), vec3(dot(vec3(4096.0, -5504.0, -4096.0), normal),
-        dot(vec3(-5376.0, -1024.0, -2176.0), normal), dot(vec3(-1536.0, 640.0, 4096.0), normal)));
-    vec3 c = vec3(dot(ff8Globe[6].xyz, l), dot(ff8Globe[7].xyz, l), dot(ff8Globe[8].xyz, l))
-        + 16.0 * vec3(ff8Globe[6].w, ff8Globe[7].w, ff8Globe[8].w);
-    c = min(floor(c * shade / 4096.0), vec3_splat(255.0));
-    if (c.r == 128.0 && c.g == 128.0 && c.b == 128.0) return vec3_splat(1.0);
-    float brightest = max(c.r, max(c.g, c.b));
-    if (brightest > 128.0) return min(floor(c * 255.0 / brightest), vec3_splat(255.0)) / 255.0;
-    return min(2.0 * c, vec3_splat(255.0)) / 255.0;
-}
-
 float FF8Depth(float zv)
 {
     float d = floor(floor(zv + 0.5) * 0.125);
@@ -224,9 +203,6 @@ void main()
                 FF8MeshCloudUV = FF8PlanetUV(unitP);
             }
             else p = FF8CameraRelative(pos.xyz);
-            // the terrain (flat, globe and FF8's bend; not the caps or the shells): lit by FF8's zone this frame
-            if (ff8Globe[1].z < 2.5 && ff8Globe[1].w < 0.5 && dot(ff8Globe[6].xyz, ff8Globe[6].xyz) > 0.0)
-                color.rgb = FF8ZoneLight(a_normal, color.r);
             v_position0 = vec4(p, 1.0);
             pos = mul(mul(d3dViewport, d3dProjection), vec4(p, 1.0));   // FF8's rotation and lens; w = view z
             // Behind the camera: z = w, so a triangle crossing the camera plane is clipped where w >= 0.
