@@ -31,6 +31,10 @@
     "hwinfo": {
       "baseline": "1.0.0",
       "port-version": 0
+    },
+    "amd-amf": {
+      "baseline": "1.5.3",
+      "port-version": 1
     }
   }
 }

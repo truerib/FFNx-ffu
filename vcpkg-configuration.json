@@ -11,7 +11,8 @@
         "openpsf",
         "soloud",
         "vgmstream",
-        "steamworkssdk"
+        "steamworkssdk",
+        "amd-amf"
       ]
     }
   ]
