@@ -431,6 +431,8 @@ private:
     uint16_t ffuLayerWidth = 0, ffuLayerHeight = 0;
     uint16_t ffuLayerReadWidth = 0, ffuLayerReadHeight = 0;   // the crop read back each frame
     bool ffuLayerActive = false;
+    bool ffuBattleLayerFrame = false;       // this battle frame's draws go into the live layer (a mixed party's guest effects)
+    bool ffuBattleLayerStart();             // the bridge asks for it (ffu_ff7_battle_layer): begins the layer at the frame's first draw
     uint32_t ffuLastFrame = 0;
     RendererState ffuLayerState;            // the state the captured draws were made with
     RendererProgram ffuLayerProgram = RendererProgram::SMOOTH;   // ... and the program (held outside the state)

@@ -36,6 +36,7 @@
 #include "renderer.h"
 #include "log.h"
 #include "utils.h"
+#include "common.h"
 
 namespace
 {
@@ -105,6 +106,30 @@ namespace
         for (int j = 0; j < 4; ++j) row[j] = w * projection[8 + j] + projection[12 + j];
         for (int k = 0; k < 4; ++k) clip[k] = row[0] * viewport[k] + row[1] * viewport[4 + k] + row[2] * viewport[8 + k] + row[3] * viewport[12 + k];
         return clip[3] != 0.0f ? clip[2] / clip[3] : 0.0f;
+    }
+
+    // Mixed parties (docs/shared-engine.md "the guest's effects"): the FF7 bridge asks for whole battle frames in the layer
+    // while its hidden battle plays a guest's move (mods/bridge-ff7 layer_ff7.c hides FF7's stage, bodies, numbers and
+    // menu and sets the host's camera), so the host lays the guest's own effects into its battle: {'F7BL', version, on}.
+    struct BattleAsk { uint32_t magic, version; volatile LONG on; };
+    const BattleAsk *battleAsk()
+    {
+        static const BattleAsk *found = nullptr;
+        static DWORD lastLook = 0;
+        if (found || ff8) return found;
+        const DWORD now = GetTickCount();
+        if (lastLook && now - lastLook < 1000) return nullptr;   // look again once a second
+        lastLook = now;
+        HMODULE bridge = GetModuleHandleA("dinput8.dll");
+        auto candidate = bridge ? (const BattleAsk *)GetProcAddress(bridge, "ffu_ff7_battle_layer") : nullptr;
+        if (candidate && candidate->magic == 0x4C423746u && candidate->version >= 1) found = candidate;
+        return found;
+    }
+
+    bool battleWanted()
+    {
+        const BattleAsk *ask = battleAsk();
+        return ask && ask->on && getmode_cached()->driver_mode == MODE_BATTLE;
     }
 
     bool layerWanted()
@@ -277,6 +302,17 @@ bool Renderer::ffuLayerWanted()
     return layerWanted();
 }
 
+// A battle frame into the layer, from its first draw (renderer.cpp draw): the bridge asks (battleWanted).
+bool Renderer::ffuBattleLayerStart()
+{
+    if (ffuBattleLayerFrame || ffuLayerActive || !battleWanted() || !ffuLayerBegin()) return false;
+    ffuBattleLayerFrame = true;
+    strncpy(captured.id, "ff7_battle", sizeof(captured.id) - 1);
+    captured.unitsPerR = 1.0f;
+    captured.depthFormat = 0;
+    return true;
+}
+
 void Renderer::ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, uint32_t depthFormat)
 {
     if (!layerWanted()) return;
@@ -313,9 +349,9 @@ void Renderer::ffuLayerRender()
 // the host swapped in its copy, a flicker (2026-10-17).
 void Renderer::ffuLayerPrepare()
 {
-    if (!layerWanted()) return;
-    static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests)
-    if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : 1; }
+    if (!layerWanted() && !battleWanted()) return;
+    static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests); a battle's whole frame: half by default
+    if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : battleWanted() ? 2 : 1; }
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
     if (bgfx::isValid(ffuLayerFrameBuffer) && width == ffuLayerWidth && height == ffuLayerHeight) return;
     for (const auto &slot : ffuLayerSlots) if (slot.pending) return;   // a resolution change: once the reads are in
@@ -348,7 +384,7 @@ void Renderer::ffuLayerPrepare()
 
 bool Renderer::ffuLayerBegin()
 {
-    if (!layerWanted() || ffuLayerActive) return false;
+    if ((!layerWanted() && !battleWanted()) || ffuLayerActive) return false;
     ffuLayerPrepare();
     if (!bgfx::isValid(ffuLayerFrameBuffer)) return false;
     const uint16_t width = ffuLayerWidth, height = ffuLayerHeight;

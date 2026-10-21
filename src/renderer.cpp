@@ -1384,9 +1384,12 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
         // Set current view transform
         bgfx::setViewTransform(backendViewId, NULL, internalState.postprocessingProjMatrix);
     }
-    else if (ffuLayerActive)
+    else if (ffuLayerActive || ffuBattleLayerStart())
     {
-        // Final Fantasy Universe: the live layer's view and target are set up by ffuLayerBegin
+        // Final Fantasy Universe: the live layer's view and target are set up by ffuLayerBegin; a battle frame drawn
+        // into it (a mixed party's guest effects) moves on to views of FFNx's own, which go into the layer too
+        bgfx::setViewFrameBuffer(backendViewId, ffuLayerFrameBuffer);
+        bgfx::setViewRect(backendViewId, 0, 0, ffuLayerWidth, ffuLayerHeight);
         bgfx::setViewTransform(backendViewId, NULL, internalState.backendProjMatrix);
     }
     else
@@ -1588,6 +1591,11 @@ void Renderer::show()
         );
     }
 
+    if (ffuBattleLayerFrame)   // Final Fantasy Universe: a battle frame drawn into the live layer goes out
+    {
+        ffuLayerEnd();
+        ffuBattleLayerFrame = false;
+    }
     ffuLayerRender();   // Final Fantasy Universe: the live layer, after all of this frame's views
     ffuLastFrame = bgfx::frame(doCaptureFrame ? BGFX_FRAME_DEBUG_CAPTURE : BGFX_FRAME_NONE);
     ffuLayerPoll();   // Final Fantasy Universe: a finished live-layer readback goes out
