@@ -1202,6 +1202,10 @@ void common_flip(struct game_obj *game_object)
 	// Update RAM usage info
 	GlobalMemoryStatusEx(&last_ram_state);
 
+	// Final Fantasy Universe: the battle look's switches, before the lighting draws (ffu_look.cpp)
+	void ffuLookFrame();
+	ffuLookFrame();
+
 	// Draw with lighting
 	if (!ff8 && enable_lighting) lighting.draw(game_object);
 
