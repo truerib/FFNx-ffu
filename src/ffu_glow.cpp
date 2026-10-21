@@ -36,6 +36,7 @@
 #include "utils.h"
 
 bool ffuLookGlow();   // ffu_look.cpp
+bool ffuLookShown();
 
 namespace
 {
@@ -140,7 +141,7 @@ bool Renderer::ffuGlowReady()
 // This draw goes into FFNx's frame while a battle is shown (Renderer::draw, its backend frame buffer branch).
 bool Renderer::ffuGlowWanted()
 {
-    return ffuLookGlow() && !internalState.bIsHDR && getmode_cached()->driver_mode == MODE_BATTLE
+    return ffuLookGlow() && ffuLookShown() && !internalState.bIsHDR && getmode_cached()->driver_mode == MODE_BATTLE
         && !ffuLayerActive && !ffuBattleLayerFrame && programState >= 0;
 }
 
@@ -193,7 +194,7 @@ bgfx::TextureHandle Renderer::ffuSharpen(bgfx::TextureHandle frame, uint16_t fra
         Renderer &renderer;
         ~PostView() { bgfx::setViewFrameBuffer(renderer.backendViewId + 1, BGFX_INVALID_HANDLE); }
     } postView{ *this };
-    if (!ffuLookSharp() || internalState.bIsHDR || getmode_cached()->driver_mode != MODE_BATTLE || ffuBattleLayerFrame
+    if (!ffuLookSharp() || !ffuLookShown() || internalState.bIsHDR || getmode_cached()->driver_mode != MODE_BATTLE || ffuBattleLayerFrame
         || !ffuGlowReady())
         return frame;
     if (!bgfx::isValid(sharpened) || sharpWidth != frameWidth || sharpHeight != frameHeight)

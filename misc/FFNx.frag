@@ -69,6 +69,9 @@ uniform vec4 gameScriptedLightColor;
 #define isAlphaGEqual abs(FSAlphaFlags.y - 6.0) < 0.00001
 
 #define doAlphaTest FSAlphaFlags.z > 0.0
+// Final Fantasy Universe: the battle look's glow keeps an effects mask in the frame's alpha (src/ffu_glow.cpp), so a
+// copy of the frame used as a texture is read opaque while it is on, as FFNx's own frame alpha left it
+#define ffuFrameOpaque FSAlphaFlags.w > 0.0
 
 
 // ---
@@ -213,6 +216,7 @@ void main()
 
             // This was previously in gamma space, so linearize again.
             texture_color.rgb = toLinear(texture_color.rgb);
+            if (ffuFrameOpaque) texture_color.a = 1.0;
         }
 
         // multiply by v_color0

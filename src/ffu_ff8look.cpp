@@ -41,6 +41,7 @@
 #include "utils.h"
 
 bool ffuLookLighting();   // ffu_look.cpp
+bool ffuLookShown();
 
 namespace
 {
@@ -79,7 +80,8 @@ namespace
 // fit; true at the frame's first flat draw after some 3D, when the lighting pass goes first.
 bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
-    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookLighting())
+    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookLighting()
+        || !ffuLookShown())
         return false;
     bool flat = true;
     for (uint32_t i = 0; i < vertexcount; i++)
@@ -107,7 +109,7 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
 // Once a frame (ffuLookFrame, at the flip, before the frame is shown): a frame with 3D and no flat draw is lit here.
 void ffuFF8LookFrame()
 {
-    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookLighting())
+    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookLighting() && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
     sumX = sumY = sumXX = sumXY = 0.0;

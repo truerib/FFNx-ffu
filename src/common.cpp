@@ -1208,6 +1208,8 @@ void common_flip(struct game_obj *game_object)
 
 	// Draw with lighting
 	if (!ff8 && enable_lighting) lighting.draw(game_object);
+	void ffuLookAfterLighting();   // Final Fantasy Universe: the battle look's values over FFNx's battle config (ffu_look.cpp)
+	ffuLookAfterLighting();
 
 	// draw any z-sorted content now that we're done drawing everything else
 	gl_draw_sorted_deferred();

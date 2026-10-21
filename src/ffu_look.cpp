@@ -72,8 +72,47 @@ bool ffuLookLighting()
 void ffuSurveyFrame();    // ffu_survey.cpp
 void ffuFF8LookFrame();   // ffu_ff8look.cpp
 
+namespace
+{
+    constexpr float METALLIC = 0.0f, SPECULAR = 0.1f, ROUGHNESS = 0.85f, LIGHT = 1.85f, AMBIENT = 1.09f;
+    std::atomic<bool> shown{true};   // the game's window is shown (a hidden battle, a mixed party's guest, gets no look)
+
+    bool lookWanted()
+    {
+        int flags = requestedFlags.load();
+        return getmode_cached()->driver_mode == MODE_BATTLE && (flags < 0 || (flags & LOOK_LIGHTING)) && shown.load();
+    }
+
+    bool lookInPlace()
+    {
+        return lighting.getMetallic() == METALLIC && lighting.getSpecular() == SPECULAR && lighting.getRoughness() == ROUGHNESS
+            && lighting.getLightIntensity() == LIGHT && lighting.getAmbientIntensity() == AMBIENT;
+    }
+
+    void put(float metallic, float specular, float roughness, float light, float ambient)
+    {
+        lighting.setMetallic(metallic);
+        lighting.setSpecular(specular);
+        lighting.setRoughness(roughness);
+        lighting.setLightIntensity(light);
+        lighting.setAmbientIntensity(ambient);
+    }
+
+    // FFNx's own values for this battle, taken after its lighting read its config for it (put back if the look is
+    // switched off mid-battle: a reload would make its shadow map again, about a second's stall: Rules 59, 89)
+    float battleMetallic, battleSpecular, battleRoughness, battleLight, battleAmbient;
+}
+
+// The game's window is shown (all the battle look's parts: ffu_glow.cpp, ffu_ff8look.cpp)
+bool ffuLookShown()
+{
+    return shown.load();
+}
+
+// At the flip, before FFNx's lighting draws (common_flip).
 void ffuLookFrame()
 {
+    shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
     ffuSurveyFrame();
     ffuFF8LookFrame();
     if (ff8)
@@ -83,41 +122,44 @@ void ffuLookFrame()
         lightingAtStart = enable_lighting ? 1 : 0;
     if (lightingAtStart != 1)
         return;
-    int flags = requestedFlags.load();
-    bool want = battle && (flags < 0 || (flags & LOOK_LIGHTING));
-    if (want)
+    bool want = lookWanted();
+    if (want && !tuned)
     {
-        if (!tuned)
-        {
-            savedMetallic = lighting.getMetallic();
-            savedSpecular = lighting.getSpecular();
-            savedRoughness = lighting.getRoughness();
-            savedLight = lighting.getLightIntensity();
-            savedAmbient = lighting.getAmbientIntensity();
-        }
-        // Every frame: FFNx reads its config again at each new battle (Lighting::draw), after this.
-        lighting.setMetallic(0.0f);
-        lighting.setSpecular(0.1f);
-        lighting.setRoughness(0.85f);
-        lighting.setLightIntensity(1.85f);
-        lighting.setAmbientIntensity(1.09f);
-        if (!tuned)
-            ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 1.7x the ambient)\n");
-        tuned = true;
+        // FFNx's values before the battle's own (put back as the battle ends: FFNx reads its config again only at a new
+        // field, not on going back to the same one)
+        savedMetallic = lighting.getMetallic();
+        savedSpecular = lighting.getSpecular();
+        savedRoughness = lighting.getRoughness();
+        savedLight = lighting.getLightIntensity();
+        savedAmbient = lighting.getAmbientIntensity();
     }
-    else if (tuned)
+    else if (!want && tuned)
     {
         if (battle)
-            lighting.reload();   // switched off mid-battle: FFNx's installed config for this battle, once
+            put(battleMetallic, battleSpecular, battleRoughness, battleLight, battleAmbient);   // switched off mid-battle
         else
-        {
-            lighting.setMetallic(savedMetallic);
-            lighting.setSpecular(savedSpecular);
-            lighting.setRoughness(savedRoughness);
-            lighting.setLightIntensity(savedLight);
-            lighting.setAmbientIntensity(savedAmbient);
-        }
+            put(savedMetallic, savedSpecular, savedRoughness, savedLight, savedAmbient);
         tuned = false;
         ffnx_info("ffu-look: FF7's battle lighting back to FFNx's own config\n");
     }
+}
+
+// Just after FFNx's lighting drew (common_flip): at a new battle FFNx has just read its config for it, so the look's
+// values go in now, before the next frame draws with FFNx's own (no frame of FFNx's own look at a battle's start).
+void ffuLookAfterLighting()
+{
+    if (ff8 || lightingAtStart != 1 || !lookWanted())
+        return;
+    if (!tuned || !lookInPlace())
+    {
+        battleMetallic = lighting.getMetallic();
+        battleSpecular = lighting.getSpecular();
+        battleRoughness = lighting.getRoughness();
+        battleLight = lighting.getLightIntensity();
+        battleAmbient = lighting.getAmbientIntensity();
+    }
+    put(METALLIC, SPECULAR, ROUGHNESS, LIGHT, AMBIENT);
+    if (!tuned)
+        ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 1.7x the ambient)\n");
+    tuned = true;
 }
