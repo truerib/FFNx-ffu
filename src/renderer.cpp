@@ -1591,11 +1591,7 @@ void Renderer::show()
         );
     }
 
-    if (ffuBattleLayerFrame)   // Final Fantasy Universe: a battle frame drawn into the live layer goes out
-    {
-        ffuLayerEnd();
-        ffuBattleLayerFrame = false;
-    }
+    ffuBattleLayerFrameEnd();   // Final Fantasy Universe: a battle frame drawn into the live layer goes out
     ffuLayerRender();   // Final Fantasy Universe: the live layer, after all of this frame's views
     ffuLastFrame = bgfx::frame(doCaptureFrame ? BGFX_FRAME_DEBUG_CAPTURE : BGFX_FRAME_NONE);
     ffuLayerPoll();   // Final Fantasy Universe: a finished live-layer readback goes out

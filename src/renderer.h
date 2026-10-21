@@ -433,12 +433,13 @@ private:
     bool ffuLayerActive = false;
     bool ffuBattleLayerFrame = false;       // this battle frame's draws go into the live layer (a mixed party's guest effects)
     bool ffuBattleLayerStart();             // the bridge asks for it (ffu_ff7_battle_layer): begins the layer at the frame's first draw
+    void ffuBattleLayerFrameEnd();          // ... and publishes the frame (an empty one if nothing of the guest drew)
     uint32_t ffuLastFrame = 0;
     RendererState ffuLayerState;            // the state the captured draws were made with
     RendererProgram ffuLayerProgram = RendererProgram::SMOOTH;   // ... and the program (held outside the state)
     void (*ffuLayerDraw)() = nullptr;       // draws them again (ffuLayerCapture)
     bgfx::ViewId ffuLayerViews[2] = { 0, 0 };
-    bool ffuLayerBegin();
+    bool ffuLayerBegin(bool touch = true);   // touch: false from inside draw() (a staged draw would be discarded)
     void ffuLayerEnd();
     void ffuLayerRender();
     void ffuLayerPoll();

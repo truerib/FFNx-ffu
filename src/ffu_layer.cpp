@@ -305,12 +305,28 @@ bool Renderer::ffuLayerWanted()
 // A battle frame into the layer, from its first draw (renderer.cpp draw): the bridge asks (battleWanted).
 bool Renderer::ffuBattleLayerStart()
 {
-    if (ffuBattleLayerFrame || ffuLayerActive || !battleWanted() || !ffuLayerBegin()) return false;
+    if (ffuBattleLayerFrame || ffuLayerActive || !battleWanted() || !ffuLayerBegin(false)) return false;   // (no touch: this draw is staged)
     ffuBattleLayerFrame = true;
     strncpy(captured.id, "ff7_battle", sizeof(captured.id) - 1);
     captured.unitsPerR = 1.0f;
     captured.depthFormat = 0;
     return true;
+}
+
+// The end of a frame the bridge wants in the layer: what was drawn goes out; a frame where nothing of the guest drew goes
+// out empty, so the host never keeps showing the last effect.
+void Renderer::ffuBattleLayerFrameEnd()
+{
+    if (ffuBattleLayerFrame)
+    {
+        ffuLayerEnd();
+        ffuBattleLayerFrame = false;
+    }
+    else if (battleWanted() && !ffuLayerActive && ffuLayerBegin())
+    {
+        strncpy(captured.id, "ff7_battle", sizeof(captured.id) - 1);
+        ffuLayerEnd();
+    }
 }
 
 void Renderer::ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, uint32_t depthFormat)
@@ -350,8 +366,9 @@ void Renderer::ffuLayerRender()
 void Renderer::ffuLayerPrepare()
 {
     if (!layerWanted() && !battleWanted()) return;
-    static int scale = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests); a battle's whole frame: half by default
-    if (scale < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); scale = value && atoi(value) > 1 ? atoi(value) : battleWanted() ? 2 : 1; }
+    static int asked = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests); a battle's whole frame: half by default
+    if (asked < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); asked = value && atoi(value) > 1 ? atoi(value) : 0; }
+    const int scale = asked > 1 ? asked : battleWanted() ? 2 : 1;   // (each call: a battle and the world map differ)
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
     if (bgfx::isValid(ffuLayerFrameBuffer) && width == ffuLayerWidth && height == ffuLayerHeight) return;
     for (const auto &slot : ffuLayerSlots) if (slot.pending) return;   // a resolution change: once the reads are in
@@ -382,7 +399,7 @@ void Renderer::ffuLayerPrepare()
               framebufferWidth, framebufferHeight, readWidth, readHeight, ownGame());
 }
 
-bool Renderer::ffuLayerBegin()
+bool Renderer::ffuLayerBegin(bool touch)
 {
     if ((!layerWanted() && !battleWanted()) || ffuLayerActive) return false;
     ffuLayerPrepare();
@@ -394,7 +411,7 @@ bool Renderer::ffuLayerBegin()
     bgfx::setViewFrameBuffer(backendViewId, ffuLayerFrameBuffer);
     bgfx::setViewRect(backendViewId, 0, 0, width, height);
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f);
-    bgfx::touch(backendViewId);
+    if (touch) bgfx::touch(backendViewId);   // (from draw(): the staged draw submits on this view and runs its clear)
     ffuLayerActive = true;
     return true;
 }
