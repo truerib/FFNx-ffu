@@ -17,7 +17,7 @@
 // effects glow. In a battle FFNx's frame keeps alpha only where additive draws (the effects) added it (the other draws
 // clear it), so: 0 extract the bright part there; 1 blur it along one axis (9 taps); 2 the two blurs, added onto the
 // picture by the caller's ONE+ONE blend, in the frame's own gamma numbers, as the games' PlayStation frame buffers added
-// (Rule 110).
+// (Rule 110). 3: the battle look's anti-aliasing, FXAA (the console form) on the whole frame, alpha kept.
 
 $input v_texcoord0
 
@@ -26,8 +26,29 @@ $input v_texcoord0
 SAMPLER2D(s_ffuGlowA, 0);
 SAMPLER2D(s_ffuGlowB, 1);
 
-uniform vec4 u_ffuGlow;         // x: the pass (0 extract, 1 blur, 2 add); yz: one texel along the blur (uv)
+uniform vec4 u_ffuGlow;         // x: the pass (0 extract, 1 blur, 2 add, 3 FXAA); yz: one texel along the blur (uv)
 uniform vec4 u_ffuGlowParams;   // x: threshold, y: knee, z: strength of the small blur, w: of the wide one
+
+vec3 fxaa(vec2 uv, vec2 texel)
+{
+    vec3 nw = texture2D(s_ffuGlowA, uv + vec2(-1.0, -1.0) * texel).rgb;
+    vec3 ne = texture2D(s_ffuGlowA, uv + vec2(1.0, -1.0) * texel).rgb;
+    vec3 sw = texture2D(s_ffuGlowA, uv + vec2(-1.0, 1.0) * texel).rgb;
+    vec3 se = texture2D(s_ffuGlowA, uv + vec2(1.0, 1.0) * texel).rgb;
+    vec3 m = texture2D(s_ffuGlowA, uv).rgb;
+    vec3 toLuma = vec3(0.299, 0.587, 0.114);
+    float lnw = dot(nw, toLuma), lne = dot(ne, toLuma), lsw = dot(sw, toLuma), lse = dot(se, toLuma), lm = dot(m, toLuma);
+    float lmin = min(lm, min(min(lnw, lne), min(lsw, lse)));
+    float lmax = max(lm, max(max(lnw, lne), max(lsw, lse)));
+    vec2 dir = vec2(-((lnw + lne) - (lsw + lse)), (lnw + lsw) - (lne + lse));
+    float reduce = max((lnw + lne + lsw + lse) * 0.03125, 0.0078125);
+    float scale = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
+    dir = clamp(dir * scale, -8.0, 8.0) * texel;
+    vec3 a = 0.5 * (texture2D(s_ffuGlowA, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture2D(s_ffuGlowA, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+    vec3 b = a * 0.5 + 0.25 * (texture2D(s_ffuGlowA, uv - dir * 0.5).rgb + texture2D(s_ffuGlowA, uv + dir * 0.5).rgb);
+    float lb = dot(b, toLuma);
+    return (lb < lmin || lb > lmax) ? a : b;
+}
 
 void main()
 {
@@ -48,9 +69,13 @@ void main()
         sum += (texture2D(s_ffuGlowA, uv + s * 3.2308).rgb + texture2D(s_ffuGlowA, uv - s * 3.2308).rgb) * 0.0703;
         gl_FragColor = vec4(sum, 1.0);
     }
-    else
+    else if (u_ffuGlow.x < 2.5)
     {
         vec3 glow = texture2D(s_ffuGlowA, uv).rgb * u_ffuGlowParams.z + texture2D(s_ffuGlowB, uv).rgb * u_ffuGlowParams.w;
         gl_FragColor = vec4(glow, 0.0);
+    }
+    else
+    {
+        gl_FragColor = vec4(fxaa(uv, u_ffuGlow.yz), texture2D(s_ffuGlowA, uv).a);
     }
 }

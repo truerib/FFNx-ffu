@@ -52,6 +52,8 @@ namespace
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle halves[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle quarters[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    bgfx::FrameBufferHandle sharpened = BGFX_INVALID_HANDLE;   // the frame anti-aliased (FXAA), the frame's own size
+    uint16_t sharpWidth = 0, sharpHeight = 0;
     uint16_t halfWidth = 0, halfHeight = 0;
     bool built = false;   // this frame's glow is in halves[0] and quarters[0]
 
@@ -79,7 +81,8 @@ namespace
         ffnx_info("FFU glow: targets made (%ux%u and a quarter)\n", width, height);
     }
 
-    // One full-screen pass of the glow program into `target` (clip space; uv 0,0 at the top left, as the frame's).
+    // One full-screen pass of the glow program into `target` (clip space; uv 0,0 at the top left, as the frame's). Its
+    // view's sort mode is left alone: one draw each, and a view id of FFNx's count must keep FFNx's own mode.
     bool pass(bgfx::ViewId view, bgfx::FrameBufferHandle target, uint16_t width, uint16_t height, float mode,
               float stepU, float stepV, bgfx::TextureHandle a, bgfx::TextureHandle b)
     {
@@ -88,7 +91,6 @@ namespace
         bgfx::setViewRect(view, 0, 0, width, height);
         bgfx::setViewClear(view, BGFX_CLEAR_COLOR, 0x00000000);
         bgfx::setViewTransform(view, nullptr, nullptr);
-        bgfx::setViewMode(view, bgfx::ViewMode::Sequential);
         bgfx::TransientVertexBuffer vertices;
         bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);
         const QuadVertex corners[6] = {
@@ -176,6 +178,39 @@ uint64_t Renderer::ffuGlowState(uint64_t state)
         | BGFX_STATE_BLEND_EQUATION_SEPARATE(rgbEquation, BGFX_STATE_BLEND_EQUATION_ADD);
 }
 
+bool ffuLookSharp();   // ffu_look.cpp
+
+// Before the glow and the post-processing pass (Renderer::renderFrame), every frame: in a battle with the
+// anti-aliasing switched on, the frame through FXAA into a target of its own size, which the glow and the post pass then
+// use (alpha kept: the glow's mask; not in the live layer's frames, nor in HDR). It must run before the post pass, so it
+// takes the next view of FFNx's own count; FFNx's post view sets no frame buffer of its own, so the view after this one
+// (this frame's post view) is given the screen explicitly, every frame, or a later frame's post pass on a view id this
+// pass once used would draw into its target instead of the screen.
+bgfx::TextureHandle Renderer::ffuSharpen(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight)
+{
+    struct PostView
+    {
+        Renderer &renderer;
+        ~PostView() { bgfx::setViewFrameBuffer(renderer.backendViewId + 1, BGFX_INVALID_HANDLE); }
+    } postView{ *this };
+    if (!ffuLookSharp() || internalState.bIsHDR || getmode_cached()->driver_mode != MODE_BATTLE || ffuBattleLayerFrame
+        || !ffuGlowReady())
+        return frame;
+    if (!bgfx::isValid(sharpened) || sharpWidth != frameWidth || sharpHeight != frameHeight)
+    {
+        if (bgfx::isValid(sharpened)) bgfx::destroy(sharpened);
+        sharpened = bgfx::createFrameBuffer(frameWidth, frameHeight, bgfx::TextureFormat::RGBA8,
+            BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        sharpWidth = frameWidth;
+        sharpHeight = frameHeight;
+        ffnx_info("FFU sharpen: target made (%ux%u)\n", frameWidth, frameHeight);
+    }
+    bgfx::TextureHandle none = BGFX_INVALID_HANDLE;
+    if (!pass(++backendViewId, sharpened, frameWidth, frameHeight, 3.0f, 1.0f / frameWidth, 1.0f / frameHeight, frame, none))
+        return frame;
+    return bgfx::getTexture(sharpened);
+}
+
 // Before the post-processing pass (Renderer::renderFrame): this frame's glow, from its frame (full size).
 void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight)
 {
@@ -209,7 +244,6 @@ void Renderer::ffuGlowComposite(float x0, float x2, float gameWidth, float gameH
     bgfx::setViewRect(view, 0, 0, (uint16_t)window_size_x, (uint16_t)window_size_y);
     bgfx::setViewClear(view, BGFX_CLEAR_NONE);
     bgfx::setViewTransform(view, nullptr, nullptr);
-    bgfx::setViewMode(view, bgfx::ViewMode::Sequential);
     const float left = 2.0f * x0 / gameWidth - 1.0f, right = 2.0f * x2 / gameWidth - 1.0f;
     bgfx::TransientVertexBuffer vertices;
     bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);

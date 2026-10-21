@@ -546,6 +546,7 @@ void Renderer::renderFrame()
         1, 3, 2
     };
 
+    frameTexture = ffuSharpen(frameTexture, framebufferWidth, framebufferHeight);   // Final Fantasy Universe: the battle look's anti-aliasing
     ffuGlowBuild(frameTexture, framebufferWidth, framebufferHeight);   // Final Fantasy Universe: the battle look's glow (ffu_glow.cpp)
 
     setPostprocessingBackend();

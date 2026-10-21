@@ -450,6 +450,7 @@ private:
     bool ffuGlowReady();
     bool ffuGlowWanted();
     uint64_t ffuGlowState(uint64_t state);
+    bgfx::TextureHandle ffuSharpen(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight);
     void ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight);
     void ffuGlowComposite(float x0, float x2, float gameWidth, float gameHeight);
 
