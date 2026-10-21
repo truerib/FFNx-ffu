@@ -765,7 +765,7 @@ void Renderer::prepareFramebuffer()
         false,
         1,
         bgfx::TextureFormat::D32F,
-        fbFlags | BGFX_TEXTURE_RT_WRITE_ONLY
+        fbFlags | (ff8 ? 0 : BGFX_TEXTURE_RT_WRITE_ONLY)   // Final Fantasy Universe: FF8's battle lighting reads it (ffu_ff8look.cpp)
     );
 
     backendFrameBuffer = bgfx::createFrameBuffer(

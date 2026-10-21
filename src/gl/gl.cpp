@@ -331,6 +331,9 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	// Final Fantasy Universe: FF8's battle draws counted (FFU_FF8_SURVEY=1, ffu_survey.cpp)
 	void ffuSurveyDraw(uint32_t, const struct nvertex *, uint32_t, uint32_t, uint32_t, uint32_t);
 	ffuSurveyDraw(vertextype, vertices, vertexcount, current_state.blend_mode, current_state.depthtest, current_state.depthmask);
+	// Final Fantasy Universe: FF8's battle lighting before its first flat draw (ffu_ff8look.cpp)
+	bool ffuFF8LookDraw(uint32_t, const struct nvertex *, uint32_t);
+	if (ffuFF8LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF8Light();
 
 	bool isLightingEnabledTexture = true;
 

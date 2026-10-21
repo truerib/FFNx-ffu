@@ -45,7 +45,7 @@ namespace
     float savedMetallic, savedSpecular, savedRoughness, savedLight, savedAmbient;
 }
 
-// flags: bit 0 the battle lighting, bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp).
+// flags: bit 0 the battle lighting (FF8's: ffu_ff8look.cpp), bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp).
 extern "C" __declspec(dllexport) void ffu_look(int flags)
 {
     requestedFlags.store(flags);
@@ -63,11 +63,19 @@ bool ffuLookSharp()
     return flags < 0 || (flags & LOOK_SHARP);
 }
 
-void ffuSurveyFrame();   // ffu_survey.cpp
+bool ffuLookLighting()
+{
+    int flags = requestedFlags.load();
+    return flags < 0 || (flags & LOOK_LIGHTING);
+}
+
+void ffuSurveyFrame();    // ffu_survey.cpp
+void ffuFF8LookFrame();   // ffu_ff8look.cpp
 
 void ffuLookFrame()
 {
     ffuSurveyFrame();
+    ffuFF8LookFrame();
     if (ff8)
         return;
     bool battle = getmode_cached()->driver_mode == MODE_BATTLE;

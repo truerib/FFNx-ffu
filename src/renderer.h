@@ -547,6 +547,9 @@ public:
     bool ffuLayerLive(const char *id);
     // hostXScale: the host's horizontal stretch of its own picture against square pixels (FF8 on the ground).
     void ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR, float hostXScale = 1.0f);
+    // Final Fantasy Universe: FF8's battle lighting (ffu_ff8look.cpp), over FF8's 3D before its first flat draw
+    bool ffuFF8Ready();
+    void ffuFF8Light();
 
     // ---
 
