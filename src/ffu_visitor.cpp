@@ -62,14 +62,23 @@ namespace
 		uint32_t width = 0, height = 0;
 		std::string path = png;
 		uint32_t handle = newRenderer.createTextureLibPng(path.data(), &width, &height, true);
+		if (handle == 0xFFFF) handle = 0;   // (bgfx's invalid handle: no texture)
 		if (handle == 0) ffnx_error("FFU visitor: can't load the texture %s\n", png);
 		else ffnx_info("FFU visitor: texture %s (%ux%u)\n", png, width, height);
 		textures[png] = handle;   // (a failure is kept too: never retried every frame)
 		return handle;
 	}
 
-	// The battle's projection, as FF7's own body draw sets it: the first part of the stand-in body that has one.
-	struct matrix* projectionOf(struct hrc_data* hrc)
+	// Its own texture alone: none of the game's last draw's extra maps (normal, PBR...) left bound to its slots.
+	void plainTexture(uint32_t texture)
+	{
+		gl_set_texture(texture, nullptr);
+		for (short slot = RendererTextureSlot::TEX_NML; slot < RendererTextureSlot::COUNT; slot++)
+			newRenderer.useTexture(0, slot);
+	}
+
+	// The stand-in body's first part that has a projection: the battle's, and its clip, as FF7's own body draw sets them.
+	struct ff7_polygon_set* partOf(struct hrc_data* hrc)
 	{
 		if (hrc == nullptr || hrc->bones == nullptr) return nullptr;
 		for (uint32_t bone = 0; bone < hrc->num_bones; bone++)
@@ -80,7 +89,7 @@ namespace
 			{
 				struct rsd_data* data = each->rsd_array[part].rsd_data;
 				if (data && data->polygon_set && data->polygon_set->matrix_set && data->polygon_set->matrix_set->matrix_projection)
-					return data->polygon_set->matrix_set->matrix_projection;
+					return data->polygon_set;
 			}
 		}
 		return nullptr;
@@ -136,10 +145,10 @@ extern "C" __declspec(dllexport) int ffu_visitor_draw(void* hrc, void* game_obje
 	struct driver_state saved;
 	gl_save_state(&saved);
 
-	struct matrix* projection = projectionOf((struct hrc_data*)hrc);
-	if (projection) gl_set_d3dprojection_matrix(projection);
+	struct ff7_polygon_set* part = partOf((struct hrc_data*)hrc);
+	if (part) gl_set_d3dprojection_matrix(part->matrix_set->matrix_projection);
 	gl_set_worldview_matrix(&worldView);
-	gl_set_texture(textureOf(png), nullptr);
+	plainTexture(textureOf(png));
 	gl_set_blend_func(BLEND_NONE);
 	internal_set_renderstate(V_NOCULL, 1, (struct game_obj*)game_object);      // (both sides: its own winding is its game's)
 	internal_set_renderstate(V_DEPTHTEST, 1, (struct game_obj*)game_object);
@@ -153,7 +162,7 @@ extern "C" __declspec(dllexport) int ffu_visitor_draw(void* hrc, void* game_obje
 	else internal_set_renderstate(V_ALPHATEST, 0, (struct game_obj*)game_object);
 
 	gl_draw_indexed_primitive(RendererPrimitiveType::PT_TRIANGLES, LVERTEX, vertexBuffer.data(), normalBuffer.data(), vertexCount,
-		indexBuffer.data(), (uint32_t)indexBuffer.size(), nullptr, nullptr, nullptr, 0, true);
+		indexBuffer.data(), (uint32_t)indexBuffer.size(), nullptr, nullptr, nullptr, part ? part->field_4 : 0, true);   // (FF7's clip)
 
 	gl_load_state(&saved);
 	return 1;
@@ -200,7 +209,7 @@ extern "C" __declspec(dllexport) int ffu_visitor_draw_tl(const ffu_visitor_tl_ve
 
 	struct driver_state saved;
 	gl_save_state(&saved);
-	gl_set_texture(textureOf(png), nullptr);
+	plainTexture(textureOf(png));
 	gl_set_blend_func(BLEND_NONE);
 	internal_set_renderstate(V_NOCULL, 1, nullptr);
 	internal_set_renderstate(V_DEPTHTEST, (flags & FFU_VISITOR_DEPTH) ? 1 : 0, nullptr);
