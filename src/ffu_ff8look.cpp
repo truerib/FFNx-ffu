@@ -24,7 +24,8 @@
 // with. Its views are FFNx's own count (the pass falls between FFNx's draws); the one with a frame buffer set draws into
 // the pass's own target, so a later frame's FFNx view on that id (FF8's battles never reset theirs) touches only that.
 // FF8's depth is linear in view depth: its scale and offset are fitted each frame from the 3D vertices (z against
-// 1 / rhw). Off with the look's lighting switched off, in HDR, with MSAA, and while a battle frame goes to the live layer.
+// 1 / rhw); the main light stands in FF8's battle world, turned into the view by FF8's battle camera matrix each frame.
+// Off with the look's lighting switched off, in HDR, with MSAA, and while a battle frame goes to the live layer.
 
 #include <algorithm>
 #include <cmath>
@@ -48,9 +49,14 @@ namespace
     constexpr uint32_t SSIGPU_SCALE_X = 0xB7CC14, SSIGPU_SCALE_Y = 0xB7CC18, SSIGPU_OFFSET_X = 0x1CA89E0, SSIGPU_OFFSET_Y = 0x1CA89E4;
     // The look's balance (the same as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact
     constexpr float AMBIENT = 0.5f, KEY = 0.85f, WRAP = 0.35f, CONTACT = 0.6f;
-    // Toward the main light, fixed to the view for now (FF8's view space: x right, y down, z ahead): above, to the
+    // FF8's battle camera: its view matrix as FF8's LookAt writes it each frame (0x503230 -> 0x50CB40: int16 rows,
+    // 4.12, view = M * world; side-session research 2026-10-22 battle-camera-stick.md), so the main light stays put in
+    // FF8's battle world as its cameras swing. Toward the light in that world (y down): high, from one side.
+    constexpr uint32_t BATTLE_VIEW_MATRIX = 0x1D97778;
+    constexpr float LIGHT_X = -0.6f, LIGHT_Y = -0.75f, LIGHT_Z = 0.25f;
+    // ... and, should the matrix read as nothing, toward it in view space (x right, y down, z ahead): above, to the
     // left, a little toward the camera.
-    constexpr float LIGHT_X = -0.45f, LIGHT_Y = -0.75f, LIGHT_Z = -0.48f;
+    constexpr float VIEW_LIGHT_X = -0.45f, VIEW_LIGHT_Y = -0.75f, VIEW_LIGHT_Z = -0.48f;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
@@ -136,6 +142,36 @@ bool Renderer::ffuFF8Ready()
     return programState > 0;
 }
 
+// Toward the main light in FF8's view space, from FF8's battle camera this frame (false: its matrix read as nothing,
+// the view's own light instead); `up` is the battle world's up in view space (for the log: a camera looking down at the
+// stage sees it up the screen and toward itself, y and z both negative).
+static bool towardLight(float toLight[3], float up[3])
+{
+    const int16_t *matrix = (const int16_t *)BATTLE_VIEW_MATRIX;
+    const float world[3] = { LIGHT_X, LIGHT_Y, LIGHT_Z };
+    float length = 0.0f;
+    for (int row = 0; row < 3; row++)
+    {
+        toLight[row] = 0.0f;
+        for (int column = 0; column < 3; column++)
+            toLight[row] += matrix[row * 3 + column] / 4096.0f * world[column];
+        up[row] = -matrix[row * 3 + 1] / 4096.0f;
+        length += toLight[row] * toLight[row];
+    }
+    const float worldLength = sqrtf(world[0] * world[0] + world[1] * world[1] + world[2] * world[2]);
+    length = sqrtf(length) / worldLength;   // (1 for a rotation)
+    const bool fromWorld = length > 0.5f && length < 2.0f;
+    if (!fromWorld)
+    {
+        toLight[0] = VIEW_LIGHT_X;
+        toLight[1] = VIEW_LIGHT_Y;
+        toLight[2] = VIEW_LIGHT_Z;
+    }
+    const float size = sqrtf(toLight[0] * toLight[0] + toLight[1] * toLight[1] + toLight[2] * toLight[2]);
+    for (int i = 0; i < 3; i++) toLight[i] /= size;
+    return fromWorld;
+}
+
 // The pass (gl_draw_indexed_primitive, just before FF8's first flat draw of a battle frame, or the flip).
 void Renderer::ffuFF8Light()
 {
@@ -180,8 +216,9 @@ void Renderer::ffuFF8Light()
     const float cam[4] = { lensH, float(*(const int16_t *)GTE_OFX), float(*(const int16_t *)GTE_OFY), left };
     const float frame[4] = { gameWidth, float(game_height), 1.0f / width, 1.0f / height };
     const float depthFit[4] = { a, b, ffuGlowWanted() ? 1.0f : 0.0f, 0.0f };
-    const float length = sqrtf(LIGHT_X * LIGHT_X + LIGHT_Y * LIGHT_Y + LIGHT_Z * LIGHT_Z);
-    const float light[4] = { LIGHT_X / length, LIGHT_Y / length, LIGHT_Z / length, KEY };
+    float toLight[3], up[3];
+    const bool fromWorld = towardLight(toLight, up);
+    const float light[4] = { toLight[0], toLight[1], toLight[2], KEY };
     const float look[4] = { AMBIENT, 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), CONTACT };
     bgfx::setUniform(uniformLens, lens);
     bgfx::setUniform(uniformCam, cam);
@@ -214,6 +251,7 @@ void Renderer::ffuFF8Light()
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::touch(backendViewId);
     if (passes++ % 600 == 0)
-        ffnx_info("FFU FF8 lighting: pass %u (depth %.4g x + %.4g from %u samples; lens H %.0f, scale %.3f x %.3f; view %u)\n",
-                  passes, a, b, samples, lensH, scaleX, scaleY, backendViewId);
+        ffnx_info("FFU FF8 lighting: pass %u (depth %.4g x + %.4g from %u samples; lens H %.0f, scale %.3f x %.3f; view %u; "
+                  "light %s %.2f %.2f %.2f, the world's up in view %.2f %.2f %.2f)\n", passes, a, b, samples, lensH, scaleX, scaleY,
+                  backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view", toLight[0], toLight[1], toLight[2], up[0], up[1], up[2]);
 }

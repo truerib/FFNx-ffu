@@ -19,8 +19,8 @@
 // pixel's view-space place is rebuilt from FF8's linear depth and its lens, its normal from its neighbours, then lit as
 // FF9's battles are (look_lit.hlsl): the main light with a soft wrap and the ambient in linear light, as a factor on
 // FF8's own (already lit) colour; the main light's shadow ray-marched through the depth toward it; contact shading
-// from the depth round it. The light is fixed to the view for now (a world-fixed sun needs FF8's camera). Effect
-// pixels (the glow's alpha mask) and the sky are left as they are; alpha is kept.
+// from the depth round it. The light stands in FF8's battle world, turned into the view by FF8's own camera each frame
+// (ffu_ff8look.cpp). Effect pixels (the glow's alpha mask) and the sky are left as they are; alpha is kept.
 
 $input v_texcoord0
 
