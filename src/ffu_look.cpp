@@ -156,7 +156,8 @@ void ffuLookFrame()
 }
 
 // Just after FFNx's lighting drew (common_flip): at a new battle FFNx has just read its config for it, so the look's
-// values go in now, before the next frame draws with FFNx's own (no frame of FFNx's own look at a battle's start).
+// values go in now, before the next frame draws (only the battle's first frame, its deferred draws drawn inside
+// FFNx's lighting, keeps FFNx's own).
 void ffuLookAfterLighting()
 {
     if (ff8 || lightingAtStart != 1 || !lookWanted())
