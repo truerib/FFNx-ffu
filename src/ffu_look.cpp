@@ -35,7 +35,7 @@
 
 namespace
 {
-    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4;
+    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8;
 
     std::atomic<int> requestedFlags{-1};   // -1: never told (the look's default: everything on)
     bool tuned = false;                     // the look's values are in FFNx's lighting now
@@ -45,7 +45,8 @@ namespace
     float savedMetallic, savedSpecular, savedRoughness, savedLight, savedAmbient;
 }
 
-// flags: bit 0 the battle lighting (FF8's: ffu_ff8look.cpp), bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp).
+// flags: bit 0 the battle lighting (FF8's: ffu_ff8look.cpp), bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp),
+// bit 3 the stick camera (FF7's held across action cameras: ff7/battle/camera.cpp; FF8's is the bridge's own).
 extern "C" __declspec(dllexport) void ffu_look(int flags)
 {
     requestedFlags.store(flags);
@@ -61,6 +62,12 @@ bool ffuLookSharp()
 {
     int flags = requestedFlags.load();
     return flags < 0 || (flags & LOOK_SHARP);
+}
+
+bool ffuLookCamera()
+{
+    int flags = requestedFlags.load();
+    return flags < 0 || (flags & LOOK_CAMERA);
 }
 
 bool ffuLookLighting()

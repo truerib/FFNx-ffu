@@ -32,6 +32,8 @@
 
 #include <bx/math.h>
 
+bool ffuLookCamera();   // Final Fantasy Universe: the battle look's camera switch (ffu_look.cpp)
+
 namespace ff7::battle
 {
     Camera camera;
@@ -278,7 +280,9 @@ namespace ff7::battle
             *pCameraPosition = *pGlobalCameraPos;
         }
 
-        if(cameraScriptIndex == -3) camera.reset();
+        // Final Fantasy Universe: with the battle look's camera on (ffu_look.cpp), the orbit holds across FF7's action
+        // cameras until R3 (Rule 71), as FF9's and FF8's do; off, FFNx's own (dropped after each action camera)
+        if(cameraScriptIndex == -3 && !::ffuLookCamera()) camera.reset();
     }
 
     void camera_hook_init()
