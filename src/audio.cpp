@@ -158,6 +158,7 @@ bool NxAudioEngine::init()
 	if (_engine.init(SoLoud::Soloud::CLIP_ROUNDOFF, SoLoud::Soloud::AUTO, external_audio_sample_rate, SoLoud::Soloud::AUTO, external_audio_number_of_channels) == 0)
 	{
 		_engineInitialized = true;
+		ffuStartSilence();   // Final Fantasy Universe: launched silent by the hub (FFU_SILENT=1)
 
 		ffnx_info("NxAudioEngine initialized: channels=%u,sample_rate=%u\n", _engine.getBackendChannels(), _engine.getBackendSamplerate());
 

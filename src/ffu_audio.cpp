@@ -22,6 +22,10 @@
 //
 // The hub mutes a game's music while another game's airship theme plays (CLAUDE.md Rule 66), through
 // `ffu_audio_music` from the bridge thread; the request is applied on the game thread, which owns the engine.
+//
+// The hub keeps every game silent while its start screen is up (Richard: "all three games must be fully muted"):
+// launched with FFU_SILENT=1, the engine starts with its global volume at 0 (music, sound effects, voices, ambient,
+// movies: everything FFNx plays), and `ffu_audio_silence(0)` from the bridge gives it back once the menu has gone.
 
 #include <windows.h>
 #include <atomic>
@@ -45,6 +49,7 @@ namespace
     std::atomic<uint32_t> requestedGainBits{0};  // float bits of the latest requested gain
     std::atomic<uint32_t> requestedFadeMs{0};
     std::atomic<uint32_t> requestSequence{0};
+    std::atomic<int> requestedSilence{-1};       // -1 nothing new, 0 its sound back, 1 silent
     uint32_t appliedSequence = 0;
     DWORD lastRestart = 0;
 }
@@ -63,6 +68,23 @@ extern "C" __declspec(dllexport) void ffu_audio_music(float gain, float seconds)
     requestSequence.fetch_add(1, std::memory_order_release);
 }
 
+// 1: every sound of the engine silent (the hub's start screen); 0: back. Any thread; applied on the game thread.
+extern "C" __declspec(dllexport) void ffu_audio_silence(int on)
+{
+    requestedSilence.store(on ? 1 : 0, std::memory_order_release);
+}
+
+// As the engine starts: silent from the very first sound when the hub launched this game behind its start screen.
+void NxAudioEngine::ffuStartSilence()
+{
+    char value[4] = "";
+    if (GetEnvironmentVariableA("FFU_SILENT", value, sizeof value) && value[0] == '1') {
+        _ffuSilenced = true;
+        _engine.setGlobalVolume(0.0f);
+        ffnx_info("FFU audio: silent from the start (FFU_SILENT=1)\n");
+    }
+}
+
 void NxAudioEngine::setFfuMusicGain(float gain, double time)
 {
     _ffuMusicGain = std::clamp(gain, 0.0f, 1.0f);
@@ -73,6 +95,13 @@ void NxAudioEngine::setFfuMusicGain(float gain, double time)
 void NxAudioEngine::ffuFrame()
 {
     if (!_engineInitialized) return;
+
+    int silence = requestedSilence.exchange(-1, std::memory_order_acquire);
+    if (silence >= 0 && (silence == 1) != _ffuSilenced) {
+        _ffuSilenced = silence == 1;
+        _engine.setGlobalVolume(_ffuSilenced ? 0.0f : 1.0f);
+        ffnx_info("FFU audio: %s\n", _ffuSilenced ? "silent (the hub's start screen)" : "its sound back");
+    }
 
     uint32_t sequence = requestSequence.load(std::memory_order_acquire);
     if (sequence != appliedSequence) {
