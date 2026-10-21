@@ -35,17 +35,23 @@
 
 namespace
 {
-    constexpr int LOOK_LIGHTING = 1;
+    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2;
 
     std::atomic<int> requestedFlags{-1};   // -1: never told (the look's default: everything on)
     bool tuned = false;                     // the look's values are in FFNx's lighting now
     int lightingAtStart = -1;
 }
 
-// flags: bit 0 the battle lighting.
+// flags: bit 0 the battle lighting, bit 1 the glow (ffu_glow.cpp).
 extern "C" __declspec(dllexport) void ffu_look(int flags)
 {
     requestedFlags.store(flags);
+}
+
+bool ffuLookGlow()
+{
+    int flags = requestedFlags.load();
+    return flags < 0 || (flags & LOOK_GLOW);
 }
 
 void ffuLookFrame()

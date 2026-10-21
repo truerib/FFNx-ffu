@@ -445,6 +445,14 @@ private:
     void ffuLayerPoll();
     void publishLayer(FfuLayerSlot &slot);
 
+    // Final Fantasy Universe: the battle look's glow (ffu_glow.cpp)
+    bool ffuGlowFrame = false;   // a battle draw went into this frame with the effects' alpha kept
+    bool ffuGlowReady();
+    bool ffuGlowWanted();
+    uint64_t ffuGlowState(uint64_t state);
+    void ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight);
+    void ffuGlowComposite(float x0, float x2, float gameWidth, float gameHeight);
+
     bgfx::TextureHandle specularIblTexture = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle diffuseIblTexture = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle envBrdfTexture = BGFX_INVALID_HANDLE;

@@ -546,6 +546,8 @@ void Renderer::renderFrame()
         1, 3, 2
     };
 
+    ffuGlowBuild(frameTexture, framebufferWidth, framebufferHeight);   // Final Fantasy Universe: the battle look's glow (ffu_glow.cpp)
+
     setPostprocessingBackend();
     backendViewId++;
     {
@@ -565,6 +567,8 @@ void Renderer::renderFrame()
 
         setBlendMode();
     }
+
+    ffuGlowComposite(x0, x2, widescreen_enabled ? wide_game_width : game_width, widescreen_enabled ? wide_game_height : game_height);
 };
 
 void Renderer::printMatrix(const char* name, float* mat)
@@ -1370,6 +1374,8 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
 {
     if (trace_all || trace_renderer) ffnx_trace("Renderer::%s with backendProgram %d\n", __func__, backendProgram);
 
+    bool ffuGlow = false;   // Final Fantasy Universe: this battle draw keeps the effects' alpha (ffu_glow.cpp)
+
     // Set current view rect
     if (bgfx::isValid(targetFrameBuffer))
     {
@@ -1396,6 +1402,7 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
     {
         // Set view to render in the framebuffer
         bgfx::setViewFrameBuffer(backendViewId, backendFrameBuffer);
+        ffuGlow = ffuGlowWanted();
 
         bgfx::setViewRect(backendViewId, 0, 0, framebufferWidth, framebufferHeight);
 
@@ -1469,6 +1476,12 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
         if (internalState.bDoDepthTest) internalState.state |= BGFX_STATE_DEPTH_TEST_LEQUAL;
 
         if (internalState.bDoDepthWrite) internalState.state |= BGFX_STATE_WRITE_Z;
+
+        if (ffuGlow)
+        {
+            internalState.state = ffuGlowState(internalState.state);
+            ffuGlowFrame = true;
+        }
     }
     bgfx::setState(internalState.state);
 
