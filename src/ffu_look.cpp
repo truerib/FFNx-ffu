@@ -40,6 +40,9 @@ namespace
     std::atomic<int> requestedFlags{-1};   // -1: never told (the look's default: everything on)
     bool tuned = false;                     // the look's values are in FFNx's lighting now
     int lightingAtStart = -1;
+    // FFNx's own values when the look took over (put back as the battle ends: FFNx reads its config again only at a new
+    // field, not at the same one, and a reload would make its shadow map again: Sonnet review, 2026-10-22)
+    float savedMetallic, savedSpecular, savedRoughness, savedLight, savedAmbient;
 }
 
 // flags: bit 0 the battle lighting, bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp).
@@ -60,8 +63,11 @@ bool ffuLookSharp()
     return flags < 0 || (flags & LOOK_SHARP);
 }
 
+void ffuSurveyFrame();   // ffu_survey.cpp
+
 void ffuLookFrame()
 {
+    ffuSurveyFrame();
     if (ff8)
         return;
     bool battle = getmode_cached()->driver_mode == MODE_BATTLE;
@@ -73,6 +79,14 @@ void ffuLookFrame()
     bool want = battle && (flags < 0 || (flags & LOOK_LIGHTING));
     if (want)
     {
+        if (!tuned)
+        {
+            savedMetallic = lighting.getMetallic();
+            savedSpecular = lighting.getSpecular();
+            savedRoughness = lighting.getRoughness();
+            savedLight = lighting.getLightIntensity();
+            savedAmbient = lighting.getAmbientIntensity();
+        }
         // Every frame: FFNx reads its config again at each new battle (Lighting::draw), after this.
         lighting.setMetallic(0.0f);
         lighting.setSpecular(0.1f);
@@ -85,7 +99,16 @@ void ffuLookFrame()
     }
     else if (tuned)
     {
-        lighting.reload();   // FFNx's installed config, once
+        if (battle)
+            lighting.reload();   // switched off mid-battle: FFNx's installed config for this battle, once
+        else
+        {
+            lighting.setMetallic(savedMetallic);
+            lighting.setSpecular(savedSpecular);
+            lighting.setRoughness(savedRoughness);
+            lighting.setLightIntensity(savedLight);
+            lighting.setAmbientIntensity(savedAmbient);
+        }
         tuned = false;
         ffnx_info("ffu-look: FF7's battle lighting back to FFNx's own config\n");
     }

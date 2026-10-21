@@ -328,6 +328,10 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 		return;
 	}
 
+	// Final Fantasy Universe: FF8's battle draws counted (FFU_FF8_SURVEY=1, ffu_survey.cpp)
+	void ffuSurveyDraw(uint32_t, const struct nvertex *, uint32_t, uint32_t, uint32_t, uint32_t);
+	ffuSurveyDraw(vertextype, vertices, vertexcount, current_state.blend_mode, current_state.depthtest, current_state.depthmask);
+
 	bool isLightingEnabledTexture = true;
 
 	// If we're attaching a texture, and it is an external one, then use a better blending that considers the alpha channel
