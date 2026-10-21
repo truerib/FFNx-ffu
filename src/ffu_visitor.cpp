@@ -158,3 +158,64 @@ extern "C" __declspec(dllexport) int ffu_visitor_draw(void* hrc, void* game_obje
 	gl_load_state(&saved);
 	return 1;
 }
+
+struct ffu_visitor_tl_vertex
+{
+	float x, y, z;   // screen pixels and depth, as the game's own transformed vertices (FF8: its GTE's, FFNx.vert FF8 depth)
+	float rhw;       // 1 / its view depth
+	uint32_t bgra;
+	float u, v;
+};
+
+enum : uint32_t
+{
+	FFU_VISITOR_DEPTH = 4,   // (screen-space draws) tested and written against the game's depth
+};
+
+// The same for a game that projects on the CPU (FF8's battle: its software GTE), so its vertices come already on the
+// screen: drawn now as TL vertices, in the game's own pass (FF8 never defers). Flags: FFU_VISITOR_ALPHA_CUT,
+// FFU_VISITOR_DEPTH. Returns 1 if drawn.
+extern "C" __declspec(dllexport) int ffu_visitor_draw_tl(const ffu_visitor_tl_vertex* vertices, uint32_t vertexCount,
+	const uint16_t* indices, uint32_t indexCount, const char* png, uint32_t flags)
+{
+	if (vertices == nullptr || indices == nullptr || vertexCount == 0 || indexCount < 3 || vertexCount > 65535) return 0;
+	vertexBuffer.resize(vertexCount);
+	for (uint32_t k = 0; k < vertexCount; k++)
+	{
+		const ffu_visitor_tl_vertex& from = vertices[k];
+		nvertex& to = vertexBuffer[k];
+		memset(&to, 0, sizeof(to));
+		to._.x = from.x;
+		to._.y = from.y;
+		to._.z = from.z;
+		to.color.w = from.rhw;
+		to.color.color = from.bgra;
+		to.color.specular = 0xFF000000;
+		to.u = from.u;
+		to.v = from.v;
+	}
+	indexBuffer.assign(indices, indices + indexCount - indexCount % 3);
+	for (WORD& index : indexBuffer)
+		if (index >= vertexCount) index = 0;
+
+	struct driver_state saved;
+	gl_save_state(&saved);
+	gl_set_texture(textureOf(png), nullptr);
+	gl_set_blend_func(BLEND_NONE);
+	internal_set_renderstate(V_NOCULL, 1, nullptr);
+	internal_set_renderstate(V_DEPTHTEST, (flags & FFU_VISITOR_DEPTH) ? 1 : 0, nullptr);
+	internal_set_renderstate(V_DEPTHMASK, (flags & FFU_VISITOR_DEPTH) ? 1 : 0, nullptr);
+	if (flags & FFU_VISITOR_ALPHA_CUT)
+	{
+		internal_set_renderstate(V_ALPHAFUNC, 6, nullptr);
+		internal_set_renderstate(V_ALPHAREF, 127, nullptr);
+		internal_set_renderstate(V_ALPHATEST, 1, nullptr);
+	}
+	else internal_set_renderstate(V_ALPHATEST, 0, nullptr);
+
+	gl_draw_indexed_primitive(RendererPrimitiveType::PT_TRIANGLES, TLVERTEX, vertexBuffer.data(), nullptr, vertexCount,
+		indexBuffer.data(), (uint32_t)indexBuffer.size(), nullptr, nullptr, nullptr, 0, true);
+
+	gl_load_state(&saved);
+	return 1;
+}
