@@ -67,6 +67,7 @@ namespace
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;
     uint16_t litWidth = 0, litHeight = 0;
+    bgfx::ViewId litView = 0;   // the view that last drew into it (given no frame buffer before it is remade)
     bool passedThisFrame = false;
     uint32_t passes = 0;
     // This frame's depth samples (z against view depth 1 / rhw), every fourth vertex of the 3D draws.
@@ -94,21 +95,26 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
     {
         for (uint32_t i = 0; i < vertexcount; i += 4)
         {
-            const float rhw = vertices[i].color.w;
-            if (rhw <= 0.0f) continue;
-            const double x = 1.0 / rhw, y = vertices[i]._.z;
+            const float rhw = vertices[i].color.w, z = vertices[i]._.z;
+            if (!(rhw > 0.0f && rhw < 0.5f) || !(z > 0.0f && z < 1.0f)) continue;   // (FFNx maps an infinite rhw to 1)
+            const double x = 1.0 / rhw, y = z;
             sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
             samples++;
         }
         return false;
     }
+    if (samples == 0)
+        return false;   // (a flat draw before any 3D, a fade or a flash: the pass waits for the HUD after the 3D)
     passedThisFrame = true;
-    return samples > 0;   // (a frame with no 3D before its HUD: nothing to light)
+    return true;
 }
 
-// Once a frame (ffuLookFrame, at the flip, before the frame is shown): a frame with 3D and no flat draw is lit here.
+// Once a frame (ffuLookFrame, at the flip, before the frame is shown): a frame with 3D and no flat draw is lit here;
+// outside battles the pass's program and target are made, so nothing is made as a battle starts (Rules 59, 89).
 void ffuFF8LookFrame()
 {
+    if (ff8 && getmode_cached()->driver_mode != MODE_BATTLE)
+        newRenderer.ffuFF8Prepare();
     if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookLighting() && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
@@ -142,6 +148,26 @@ bool Renderer::ffuFF8Ready()
     programState = bgfx::isValid(program) ? 1 : -1;
     ffnx_info("FFU FF8 lighting: %s\n", programState > 0 ? "ready" : "its program failed");
     return programState > 0;
+}
+
+// The pass's program, and its target at the frame's size (outside battles: ffuFF8LookFrame; Rules 59, 89).
+void Renderer::ffuFF8Prepare()
+{
+    if (internalState.bIsHDR || enable_antialiasing > 0 || !ffuFF8Ready())
+        return;
+    const uint16_t width = framebufferWidth, height = framebufferHeight;
+    if (bgfx::isValid(litTarget) && litWidth == width && litHeight == height)
+        return;
+    if (bgfx::isValid(litTarget))
+    {
+        if (litView) bgfx::setViewFrameBuffer(litView, BGFX_INVALID_HANDLE);
+        bgfx::destroy(litTarget);
+    }
+    litTarget = bgfx::createFrameBuffer(width, height, bgfx::TextureFormat::RGBA16,
+        BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+    litWidth = width;
+    litHeight = height;
+    ffnx_info("FFU FF8 lighting: target made (%ux%u)\n", width, height);
 }
 
 // Toward the main light in FF8's view space, from FF8's battle camera this frame (false: its matrix read as nothing,
@@ -186,16 +212,10 @@ void Renderer::ffuFF8Light()
     const float lensH = float(*(const uint32_t *)GTE_H & 0xFFFF);
     if (lensH <= 0.0f || !(scaleX > 0.0f) || !(scaleY > 0.0f))
         return;
+    ffuFF8Prepare();   // (made outside battles already; again only if the frame's size changed)
     const uint16_t width = framebufferWidth, height = framebufferHeight;
-    if (!bgfx::isValid(litTarget) || litWidth != width || litHeight != height)
-    {
-        if (bgfx::isValid(litTarget)) bgfx::destroy(litTarget);
-        litTarget = bgfx::createFrameBuffer(width, height, bgfx::TextureFormat::RGBA16,
-            BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-        litWidth = width;
-        litHeight = height;
-        ffnx_info("FFU FF8 lighting: target made (%ux%u)\n", width, height);
-    }
+    if (!bgfx::isValid(litTarget))
+        return;
 
     // The depth fit: FF8's z = a * view depth + b (FF8 writes about 1.5236e-5 a unit and 0.0015)
     float a = 1.5235901e-05f, b = 0.0015f;
@@ -203,11 +223,14 @@ void Renderer::ffuFF8Light()
     if (samples >= 16 && det > 1e-9)
     {
         const float fitA = float((n * sumXY - sumX * sumY) / det), fitB = float((sumY - fitA * sumX) / n);
-        if (fitA > 0.0f) { a = fitA; b = fitB; }
+        if (fitA > 0.75f * a && fitA < 1.25f * a) { a = fitA; b = fitB; }   // (an outlier draw keeps FF8's own numbers)
     }
 
-    // 1: the picture so far drawn lit into the pass's own target (FFNx's colour and FF8's depth read)
+    // 1: the picture so far drawn lit into the pass's own target (FFNx's colour and FF8's depth read). Each of the
+    // pass's views draws in order, as FFNx's own view 1 (bgfx's default mode sorts: the HUD after it would be sorted)
     ++backendViewId;
+    litView = backendViewId;
+    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     bgfx::setViewFrameBuffer(backendViewId, litTarget);
     bgfx::setViewRect(backendViewId, 0, 0, width, height);
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
@@ -243,6 +266,7 @@ void Renderer::ffuFF8Light()
 
     // 2: copied back over FFNx's colour
     ++backendViewId;
+    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::blit(backendViewId, {.handle = backendFrameBufferRT[0]}, {.handle = bgfx::getTexture(litTarget, 0), .x = 0, .y = 0, .width = width, .height = height});
     bgfx::touch(backendViewId);
@@ -250,6 +274,7 @@ void Renderer::ffuFF8Light()
     // 3: FFNx carries on (the HUD) in a view of its own, after these (its draws set their frame buffer; nothing here
     // marks the frame as drawn or not)
     ++backendViewId;
+    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::touch(backendViewId);
     if (passes++ % 600 == 0)

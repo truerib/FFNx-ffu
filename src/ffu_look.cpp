@@ -130,17 +130,21 @@ void ffuLookFrame()
     if (lightingAtStart != 1)
         return;
     bool want = lookWanted();
-    if (want && !tuned)
+    static bool wasBattle = false;
+    const bool entering = battle && !wasBattle;
+    wasBattle = battle;
+    if (entering)
     {
-        // FFNx's values before the battle's own (put back as the battle ends: FFNx reads its config again only at a new
-        // field, not on going back to the same one)
+        // FFNx's values before the battle's own (put back as the battle ends, if the look took over: FFNx reads its
+        // config again only at a new field, not on going back to the same one), taken as the battle begins, before
+        // FFNx's lighting reads the battle's config
         savedMetallic = lighting.getMetallic();
         savedSpecular = lighting.getSpecular();
         savedRoughness = lighting.getRoughness();
         savedLight = lighting.getLightIntensity();
         savedAmbient = lighting.getAmbientIntensity();
     }
-    else if (!want && tuned)
+    if (!want && tuned)
     {
         if (battle)
             put(battleMetallic, battleSpecular, battleRoughness, battleLight, battleAmbient);   // switched off mid-battle

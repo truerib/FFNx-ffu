@@ -549,6 +549,7 @@ public:
     void ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float hostUnitsPerR, float hostXScale = 1.0f);
     // Final Fantasy Universe: FF8's battle lighting (ffu_ff8look.cpp), over FF8's 3D before its first flat draw
     bool ffuFF8Ready();
+    void ffuFF8Prepare();
     void ffuFF8Light();
 
     // ---

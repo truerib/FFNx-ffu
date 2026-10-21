@@ -756,7 +756,7 @@ void Renderer::prepareFramebuffer()
         false,
         1,
         internalState.bIsHDR ? bgfx::TextureFormat::RGB10A2 : bgfx::TextureFormat::RGBA16,
-        fbFlags | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP
+        fbFlags | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | (ff8 && enable_antialiasing == 0 && bgfx::getRendererType() == bgfx::RendererType::Vulkan ? BGFX_TEXTURE_BLIT_DST : 0)   // Final Fantasy Universe: FF8's battle lighting copies back into it
     );
 
     backendFrameBufferRT[1] = bgfx::createTexture2D(
@@ -765,7 +765,7 @@ void Renderer::prepareFramebuffer()
         false,
         1,
         bgfx::TextureFormat::D32F,
-        fbFlags | (ff8 ? 0 : BGFX_TEXTURE_RT_WRITE_ONLY)   // Final Fantasy Universe: FF8's battle lighting reads it (ffu_ff8look.cpp)
+        fbFlags | (ff8 && enable_antialiasing == 0 && bgfx::getRendererType() == bgfx::RendererType::Vulkan ? 0 : BGFX_TEXTURE_RT_WRITE_ONLY)   // Final Fantasy Universe: FF8's battle lighting reads it (ffu_ff8look.cpp)
     );
 
     backendFrameBuffer = bgfx::createFrameBuffer(
