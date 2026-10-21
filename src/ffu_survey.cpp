@@ -24,6 +24,7 @@
 #include <cstring>
 
 #include "common.h"
+#include "gl.h"
 #include "globals.h"
 #include "log.h"
 
@@ -60,7 +61,7 @@ void ffuSurveyDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t
     }
     bool flat = true;
     for (uint32_t i = 0; i < vertexcount; i++)
-        if (vertices[i].w != 1.0f)
+        if (vertices[i].color.w != 1.0f)   // (rhw)
         {
             flat = false;
             break;
@@ -84,8 +85,8 @@ void ffuSurveyDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t
     {
         frame.zMin = std::min(frame.zMin, vertices[i]._.z);
         frame.zMax = std::max(frame.zMax, vertices[i]._.z);
-        frame.rhwMin = std::min(frame.rhwMin, vertices[i].w);
-        frame.rhwMax = std::max(frame.rhwMax, vertices[i].w);
+        frame.rhwMin = std::min(frame.rhwMin, vertices[i].color.w);
+        frame.rhwMax = std::max(frame.rhwMax, vertices[i].color.w);
     }
 }
 
