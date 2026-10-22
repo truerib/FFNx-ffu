@@ -113,7 +113,8 @@ float rimAt(vec2 uv, float here)
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
             float plane = here + g.x * o.x / texel.x + g.y * o.y / texel.y;
             float farther = (plane - nearness(at)) / here;   // (0: on the plane; 1: nothing there)
-            rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5));
+            // (by how sideways the step lies: the ground's own folds, lines across the picture, are no character's edge)
+            rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5) * abs(cos(a)));
         }
     return rim;
 }

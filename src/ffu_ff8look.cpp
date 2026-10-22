@@ -201,6 +201,25 @@ static DepthLines depthLines()
         const float fitSlope = float((n * sxy - sx * sy) / det), fitOffset = float((sy - fitSlope * sx) / n);
         if (fitSlope > 2e-6f && fitSlope < 5e-5f) { lines.slope = fitSlope; lines.offset = fitOffset; fitted = true; }
     }
+    if (fitted)
+    {
+        // (once again without what lies off that line by more than 0.01: far pieces of the stage FF8 pushes back less)
+        double rx = 0.0, ry = 0.0, rxx = 0.0, rxy = 0.0;
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < samples; i++)
+        {
+            const float x = sampled[i].view, y = sampled[i].z;
+            if (y - slope * x > PUSHED || fabsf(y - (lines.slope * x + lines.offset)) > 0.01f) continue;
+            rx += x; ry += y; rxx += double(x) * x; rxy += double(x) * y;
+            kept++;
+        }
+        const double m = double(kept), mdet = m * rxx - rx * rx;
+        if (kept >= 16 && mdet > 1e-3 * m * m)
+        {
+            const float refit = float((m * rxy - rx * ry) / mdet), refitOffset = float((ry - refit * rx) / m);
+            if (refit > 2e-6f && refit < 5e-5f) { lines.slope = refit; lines.offset = refitOffset; lines.rest = kept; }
+        }
+    }
     lines.pushed = pushed;
     lines.pushedLowest = pushedLowest;
     lines.restMost = restMost;

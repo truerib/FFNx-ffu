@@ -49,24 +49,28 @@ vec2 rayAt(vec2 uv)
     return vec2(((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x, ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x);
 }
 
-// What FF8 pushed back (its stage, in pieces at depth offsets of their own: ffu_ff8look.cpp)
-bool pushedBack(float z)
+// The battle floor's depth along this pixel's ray (FF8's world height 0, from its camera: ffu_ff8look.cpp), or 0 where
+// the ray never meets it (above the horizon) or the camera wasn't read this frame
+float floorAt(vec2 uv)
 {
-    return u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z;
+    float down = dot(u_ff8Floor.xyz, vec3(rayAt(uv), 1.0));
+    return u_ff8Floor.w > 0.0 && down > 1e-6 ? u_ff8Floor.w / down : 0.0;
 }
 
-// The view depth here: what FF8 pushed back read off its battle floor (the floor plane through this pixel's ray; where
-// the ray never meets it, the backdrop: 1e7), the rest on its characters' line.
+// The view depth here. FF8 pushes its stage back behind everything, in pieces at depth offsets of their own (they overlap
+// its characters' depths, so no depth tells them apart: 2026-10-22, builds 93-94); but nothing seen lies below the floor,
+// so a depth read on the characters' line that stands beyond the floor along this ray is the stage's: the floor's.
 float viewDepthAt(vec2 uv, float z)
 {
-    if (!pushedBack(z))
-        return (z - u_ff8Depth.y) / u_ff8Depth.x;
-    if (u_ff8Floor.w > 0.0)
-    {
-        float down = dot(u_ff8Floor.xyz, vec3(rayAt(uv), 1.0));
-        return down > 1e-6 ? u_ff8Floor.w / down : 1e7;
-    }
-    return (z - u_ff8Stage.y) / u_ff8Stage.x;   // (FF8's camera not read: its stage's line)
+    float own = (z - u_ff8Depth.y) / u_ff8Depth.x, floorDepth = floorAt(uv);
+    return floorDepth > 1.0 && floorDepth < own ? floorDepth : own;
+}
+
+// On the floor (what FF8 pushed back, read off the floor): not lit as an edge by the rim light
+bool onFloor(vec2 uv, float z)
+{
+    float floorDepth = floorAt(uv);
+    return floorDepth > 1.0 && floorDepth < (z - u_ff8Depth.y) / u_ff8Depth.x;
 }
 
 vec3 viewFrom(vec2 uv, float Z)
@@ -85,7 +89,7 @@ vec3 viewAt(vec2 uv)
 vec3 viewNear(vec2 uv, float zc, float Zc)
 {
     float z = texture2D(s_ff8Depth, uv).x;
-    if (pushedBack(z))
+    if (onFloor(uv, z))
         return viewFrom(uv, viewDepthAt(uv, z));
     return viewFrom(uv, abs(z - zc) < 2e-4 && u_ff8Stage.x > 0.0 ? Zc + (z - zc) / u_ff8Stage.x : viewDepthAt(uv, z));
 }
@@ -157,7 +161,8 @@ float rimAt(vec2 uv, float here)
             vec2 at = uv + o;
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
             float plane = here + g.x * o.x / t.x + g.y * o.y / t.y;
-            rim = max(rim, smoothstep(0.15, 0.45, (plane - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5));
+            // (by how sideways the step lies: the floor's own folds, lines across the picture, are no character's edge)
+            rim = max(rim, smoothstep(0.15, 0.45, (plane - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5) * abs(cos(a)));
         }
     return rim;
 }
@@ -185,7 +190,7 @@ void main()
         // (the test view: blue nothing drawn (far), magenta nothing (near), red the backdrop, green the floor (what FF8
         // pushed back, read off the floor plane), yellow the characters' line; over the picture dimmed)
         vec3 code = z >= 0.9999 ? vec3(0.0, 0.0, 1.0) : z <= 0.0001 ? vec3(1.0, 0.0, 1.0) : backdropAt(uv, z, backdrop) ? vec3(1.0, 0.0, 0.0)
-            : pushedBack(z) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 1.0, 0.0);
+            : onFloor(uv, z) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 1.0, 0.0);
         gl_FragColor = vec4(mix(scene.rgb * 0.3, code, 0.6), scene.a);
         return;
     }
@@ -263,7 +268,7 @@ void main()
     }
     float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
     float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
-    if (u_ff8Rim.x > 0.0)
+    if (u_ff8Rim.x > 0.0 && !onFloor(uv, z))
     {
         // (the rim light: a light edge, a factor on the pixel's own colour and a touch of light, the battle only)
         float rim = rimAt(uv, 1.0 / max(p.z, 1.0)) * u_ff8Rim.x * onStage;
