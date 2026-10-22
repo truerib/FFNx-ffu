@@ -792,15 +792,22 @@ bool ffuLayerDropsFlat()
     return ask && ask->on && !(ask->version >= 3 && ask->keep_flat);
 }
 
-// The own battle engine's layer (docs/battle-engine.md step 4: FF8's bridge asks with keep_flat, FF8's window never shown):
-// every FF8 battle draw keeps FFNx's colour blend, and its alpha counts how much of what lies behind still shows
-// (renderer.cpp): the layer starts transparent black, an opaque draw makes it 1, FF8's average blend 1/2 + A/2, its
-// additive, subtractive and quarter blends leave it, so the engine lays it on as ours x (1 - A) + layer.
+// The own battle engine's layer (docs/battle-engine.md step 4: FF8's and FF7's bridges ask with keep_flat, the game's
+// window never shown): every battle draw keeps FFNx's colour blend, and its alpha counts how much of what lies behind
+// still shows (renderer.cpp): the layer starts transparent black, an opaque draw makes it 1, the average blend 1/2 + A/2,
+// the additive, subtractive and quarter blends leave it, so the engine lays it on as ours x (1 - A) + layer.
 bool ffuOwnLayerBlending()
 {
-    if (!ff8 || getmode_cached()->driver_mode != MODE_BATTLE) return false;
+    if (getmode_cached()->driver_mode != MODE_BATTLE) return false;
     const BattleAsk *ask = battleAsk();
     return ask && ask->on && ask->version >= 3 && ask->keep_flat;
+}
+
+// The games this build makes the own battle engine's layer for (bit 0 FF7, bit 1 FF8): the bridges ask before saying so to
+// the hub (own_battle_ready's layer).
+extern "C" __declspec(dllexport) int ffu_own_layer_games()
+{
+    return 3;
 }
 
 bool ffuGuestLayersDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
