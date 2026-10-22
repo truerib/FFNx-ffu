@@ -223,7 +223,7 @@ void main()
     {
         vec4 sky = vec4(v_ffucap.rgb, v_ffu.y);
         float outdoors = smoothstep(1.6, 2.4, backdrop / max(u_ff8Haze.x, 1.0));   // (as FF7's: no step as cameras move)
-        if (sky.w >= 2.0 && backdrop > u_ff8Haze.x)
+        if (sky.w >= 1.5 && backdrop > u_ff8Haze.x)   // (the count arrives interpolated: never test it exactly)
             shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
     }
     gl_FragColor = u_ff8Haze.w > 1.5 ? vec4(vec3_splat(shadowSeen), scene.a) : vec4(mix(shaded, scene.rgb, effect), scene.a);

@@ -255,10 +255,12 @@ float ffuLookLevel(int which)
 // out"): how far a finger moved up the pad since the last frame, in pad heights x 0.5 (+ in), as the hub's own ground
 // and flight zoom read it (airship_flight.gd _touch_swipe); a new touch starts where the finger lands. Through our pad
 // DLL's ffu_pad_touch (mods/ffu-pad, xinput9_1_0.dll in FF7's and FF8's folders); 0 outside battles, with the look's
-// camera off, or without the DLL. Once a frame (FF7's battle camera: ff7/battle/camera.cpp).
+// camera off, or without the DLL. The pad is read once a frame (ffuLookFrame) and FF7's battle camera takes that frame's
+// swipe when it runs (ffuTouchSwipe): a finger moving while an action camera plays is never added all at once after it.
 bool ffuLookCamera();
+static float pendingSwipe = 0.0f;
 
-float ffuTouchSwipe()
+static void touchFrame()
 {
     typedef DWORD (WINAPI *touch_fn)(DWORD *down, float *y, DWORD *number);
     static touch_fn touch = nullptr;
@@ -282,8 +284,13 @@ float ffuTouchSwipe()
     lastDown = down != 0;
     lastNumber = number;
     lastY = y;
-    if (getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookCamera())
-        return 0.0f;
+    pendingSwipe = getmode_cached()->driver_mode == MODE_BATTLE && ffuLookCamera() ? swipe : 0.0f;
+}
+
+float ffuTouchSwipe()
+{
+    const float swipe = pendingSwipe;
+    pendingSwipe = 0.0f;
     return swipe;
 }
 
@@ -431,6 +438,7 @@ static void logBattleFrames()
 void ffuLookFrame()
 {
     logBattleFrames();
+    if (!ff8) touchFrame();   // (FF7's battle camera's touchpad zoom; FF8's is the bridge's own: camera_ff8.c)
     frameFlags.store(requestedFlags.load());
     // (the first battle of this run warms the look up while it is still hidden, behind the hub's swirl: its targets are
     // made and its passes' pipelines built before the window shows, where FF7 stalled 370 ms; once, and for at most 300
