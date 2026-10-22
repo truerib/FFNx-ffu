@@ -74,6 +74,7 @@ public:
 		{}
 		int game_id;
 		int id;
+		std::string ffu_key;   // (FFU: the key its file was loaded by, for a visitor's own sounds: ffu_audio.cpp)
 		SoLoud::VGMStream *stream;
 		SoLoud::handle handle;
 		float volume;
@@ -191,6 +192,7 @@ private:
 	// and its restore) compose with the hub's mute instead of undoing it (ffu_audio.cpp)
 	float _ffuMusicGain = 1.0f;
 	bool _ffuSilenced = false;
+	std::vector<std::pair<SoLoud::VGMStream*, SoLoud::handle>> _ffuPlaying;   // files played for a visitor (ffu_audio_play_file)
 	SoLoud::time _lastVolumeFadeEndTime = 0.0;
 
 	void cleanOldAudioSources();
@@ -276,6 +278,8 @@ public:
 	void setFfuMusicGain(float gain, double time = 0);
 	void ffuFrame();
 	void ffuStartSilence();
+	void ffuNote(const char *key, NxAudioEngineLayer layer, float volume, float pan);   // a sound played, noted while recording
+	void ffuPlayFiles();
 	void restoreMusicMasterVolume(double time = 0);
 	float getMusicVolume(int channel);
 	bool isMusicVolumeFadeFinished();

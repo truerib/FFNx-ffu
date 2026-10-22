@@ -378,6 +378,7 @@ bool NxAudioEngine::playSFX(const char* name, int id, int channel, float panning
 		options->id = _curId;
 		// Avoid loading a stream if it is meant to be skipped
 		options->stream = skipPlay ? nullptr : loadSFX(_id, loop);
+		options->ffu_key = _id;
 	}
 
 	if (skipPlay)
@@ -404,6 +405,8 @@ bool NxAudioEngine::playSFX(const char* name, int id, int channel, float panning
 		);
 
 		options->loop = _engine.getLooping(options->handle);
+
+		ffuNote(options->ffu_key.c_str(), NxAudioEngineLayer::NXAUDIOENGINE_SFX, options->volume, panning);   // (FFU: a visitor's own sounds)
 
 		return true;
 	}
@@ -1181,6 +1184,8 @@ bool NxAudioEngine::playVoice(const char* name, int slot, float volume, int game
 		}
 
 		_currentVoice[slot].handle = _engine.play(*_currentVoice[slot].stream, _currentVoice[slot].volume);
+
+		ffuNote(filename, (NxAudioEngineLayer)-1, volume, 0.0f);   // (FFU: a visitor's own voice, its file already resolved)
 
 		return _engine.isValidVoiceHandle(_currentVoice[slot].handle);
 	}
