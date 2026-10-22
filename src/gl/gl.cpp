@@ -348,6 +348,10 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 		ffuGuestLayersCompose();
 		newRenderer.doScissorTest(clip != 0);   // (this draw's own scissor back: the quad's draw turned it off)
 	}
+	// Final Fantasy Universe: FF8 drawing only its effects for a host's battle (mixed parties; its bridge asks: layer_ff8.c):
+	// its flat draws (its HUD row, its damage numbers, its target hand) are never its effects, so kept out of what it publishes
+	bool ffuLayerDropsFlat();
+	if (ffuFlat && ffuLayerDropsFlat()) return;
 
 	bool isLightingEnabledTexture = true;
 
