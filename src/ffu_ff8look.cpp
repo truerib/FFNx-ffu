@@ -97,8 +97,8 @@ namespace
     bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerLight = BGFX_INVALID_HANDLE;
     // The spells' light (Richard's next list, item 1; as FF7's: ffu_ff7look.cpp): the effects' light from the glow's
-    // mask (the last frame's, blurred at a quarter) over a disc about a tenth of the picture across, multiplied in
-    constexpr float SPELL = 3.0f, SPELL_DISC = 0.08f;
+    // mask (the last frame's, blurred about a tenth of the picture wide by ffu_glow.cpp), multiplied in
+    constexpr float SPELL = 3.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;

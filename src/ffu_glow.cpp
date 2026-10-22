@@ -50,6 +50,10 @@ namespace
     // (Renderer::draw), so a view id of ours reused by it in a later frame (FF8's battles never reset theirs) would send
     // the picture into our targets. bgfx runs views in id order: these come after all of FFNx's, its post pass included.
     constexpr bgfx::ViewId FIRST_VIEW = 248, COMPOSITE_VIEW = 254;
+    // The spells' light's own chain (ffuGlowLight): seven views just before the glow's, so it runs before this frame's
+    // glow and takes the last frame's quarter-size light (FF7's and FF8's passes, which refuse views above 240, read its
+    // result the frame after: two frames late, unseen). Not run in a frame whose FFNx views reached it.
+    constexpr bgfx::ViewId LIGHT_FIRST_VIEW = 241;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
@@ -62,7 +66,13 @@ namespace
     uint16_t sharpWidth = 0, sharpHeight = 0;
     uint16_t halfWidth = 0, halfHeight = 0;
     bool built = false;   // this frame's glow is in halves[0] and quarters[0]
-    bool lightBuilt = false;   // the last frame's light the effects added is in quarters[0] (ffuGlowLight)
+    bool quarterReady = false;   // quarters[0] holds the light the effects added, from the last frame's glow passes
+    // The spells' light: that light at a sixteenth of the frame, blurred three times wider each pass (half floats: it is
+    // multiplied up, so 8 bits would band), ready for the passes when lightBuilt (the last frame's chain ran)
+    bgfx::FrameBufferHandle lights[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    uint16_t lightWidth = 0, lightHeight = 0;
+    bool lightBuilt = false;
+    uint32_t targetsMade = 0;   // (a frame that remade the targets has no last frame's light to read)
 
     struct QuadVertex { float x, y, z, u, v; };
 
@@ -77,12 +87,19 @@ namespace
         uint16_t width = std::max<uint16_t>(frameWidth / 2, 1), height = std::max<uint16_t>(frameHeight / 2, 1);
         if (width == halfWidth && height == halfHeight && bgfx::isValid(halves[0]))
             return;
-        for (bgfx::FrameBufferHandle *target : { &halves[0], &halves[1], &quarters[0], &quarters[1] })
+        for (bgfx::FrameBufferHandle *target : { &halves[0], &halves[1], &quarters[0], &quarters[1], &lights[0], &lights[1] })
             if (bgfx::isValid(*target)) bgfx::destroy(*target);
+        quarterReady = lightBuilt = false;   // (new targets hold nothing yet)
+        targetsMade++;
         halves[0] = makeTarget(width, height);
         halves[1] = makeTarget(width, height);
         quarters[0] = makeTarget(std::max<uint16_t>(width / 2, 1), std::max<uint16_t>(height / 2, 1));
         quarters[1] = makeTarget(std::max<uint16_t>(width / 2, 1), std::max<uint16_t>(height / 2, 1));
+        lightWidth = std::max<uint16_t>(width / 8, 1);
+        lightHeight = std::max<uint16_t>(height / 8, 1);
+        for (bgfx::FrameBufferHandle &light : lights)
+            light = bgfx::createFrameBuffer(lightWidth, lightHeight, bgfx::TextureFormat::RGBA16F,
+                                            BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         halfWidth = width;
         halfHeight = height;
         ffnx_info("FFU glow: targets made (%ux%u and a quarter)\n", width, height);
@@ -243,12 +260,26 @@ bgfx::TextureHandle Renderer::ffuSharpen(bgfx::TextureHandle frame, uint16_t fra
 void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight)
 {
     built = false;
-    lightBuilt = false;
+    const bool wasReady = quarterReady;
+    quarterReady = lightBuilt = false;
     const bool drawn = ffuGlowFrame;
     ffuGlowFrame = false;
     if (!drawn || !ffuGlowWanted() || !ffuGlowReady())
         return;
+    const uint32_t madeBefore = targetsMade;
     targets(frameWidth, frameHeight);
+    // The spells' light from the last frame's quarter-size light (its views run before this frame's glow: above)
+    if (ffuLookSpell() && wasReady && targetsMade == madeBefore && backendViewId < LIGHT_FIRST_VIEW && bgfx::isValid(quarters[0]) && bgfx::isValid(lights[0]))
+    {
+        bgfx::TextureHandle none = BGFX_INVALID_HANDLE;
+        bgfx::ViewId view = LIGHT_FIRST_VIEW;
+        const uint16_t lw = lightWidth, lh = lightHeight;
+        lightBuilt = pass(view++, lights[0], lw, lh, 1.0f, 0.0f, 0.0f, bgfx::getTexture(quarters[0]), none);   // (a plain copy down)
+        for (const float spread : { 2.0f, 4.0f, 8.0f })
+            lightBuilt = lightBuilt
+                && pass(view++, lights[1], lw, lh, 1.0f, spread / lw, 0.0f, bgfx::getTexture(lights[0]), none)
+                && pass(view++, lights[0], lw, lh, 1.0f, 0.0f, spread / lh, bgfx::getTexture(lights[1]), none);
+    }
     const uint16_t qw = std::max<uint16_t>(halfWidth / 2, 1), qh = std::max<uint16_t>(halfHeight / 2, 1);
     bgfx::TextureHandle none = BGFX_INVALID_HANDLE;
     bgfx::ViewId view = FIRST_VIEW;
@@ -259,15 +290,16 @@ void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint
         && pass(view++, quarters[1], qw, qh, 1.0f, 2.0f / qw, 0.0f, bgfx::getTexture(quarters[0]), none)
         && pass(view++, quarters[0], qw, qh, 1.0f, 0.0f, 2.0f / qh, bgfx::getTexture(quarters[1]), none);
     built = ok && ffuLookGlow();
-    lightBuilt = ok;
+    quarterReady = ok;
 }
 
-// The light the effects added, blurred at a quarter of the frame's size, as the last frame left it (bgfx runs the glow's
-// views after all of FFNx's, so a pass between FFNx's draws reads it before this frame's glow overwrites it): the
-// spells' light's source for FF7's and FF8's passes (ffu_ff7look.cpp, ffu_ff8look.cpp). Invalid when it wasn't built.
+// The light the effects added, at a sixteenth of the frame's size and blurred about a tenth of the picture wide, as the
+// last frame's light chain left it (its views run after all of FFNx's, so a pass between FFNx's draws reads it before
+// this frame's chain overwrites it): the spells' light for FF7's and FF8's passes (ffu_ff7look.cpp, ffu_ff8look.cpp).
+// Invalid when it wasn't built (review: the quarter-size light alone, sampled on a sparse disc, made rings of copies).
 bgfx::TextureHandle ffuGlowLight()
 {
-    return lightBuilt && bgfx::isValid(quarters[0]) ? bgfx::getTexture(quarters[0]) : bgfx::TextureHandle BGFX_INVALID_HANDLE;
+    return lightBuilt && bgfx::isValid(lights[0]) ? bgfx::getTexture(lights[0]) : bgfx::TextureHandle BGFX_INVALID_HANDLE;
 }
 
 // After the post-processing pass: the glow added onto the picture where the frame was drawn (x0..x2 in the post

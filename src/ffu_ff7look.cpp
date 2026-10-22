@@ -58,10 +58,10 @@ namespace
     // already lit 4 to 1, so the look's balance alone hardly showed): its strength (the contact slider scales it) and
     // its ring's radius across the picture
     constexpr float CONTACT = 0.7f, CONTACT_RING = 0.012f;
-    // The spells' light (Richard's next list, item 1): the light FF7's effects added (the glow's mask, blurred at a
-    // quarter of the frame by ffu_glow.cpp, the last frame's), spread over a disc about a tenth of the picture across
-    // and multiplied into what stands round it: its strength at the slider's 1, its disc's radius (across the picture)
-    constexpr float SPELL = 3.0f, SPELL_DISC = 0.08f;
+    // The spells' light (Richard's next list, item 1): the light FF7's effects added (the glow's mask, blurred about a
+    // tenth of the picture wide at a sixteenth of it by ffu_glow.cpp, the last frame's), multiplied into what stands
+    // round it: its strength at the slider's 1
+    constexpr float SPELL = 3.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
@@ -277,7 +277,7 @@ void Renderer::ffuFF7Pass()
     bgfx::setUniform(uniformSplit, split);
     const float contactData[4] = { contact, CONTACT_RING, 1.0f / float(framebufferWidth), 1.0f / float(std::max<uint16_t>(framebufferHeight, 1)) };
     bgfx::setUniform(uniformContact, contactData);
-    const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * aspect, 0.0f };   // (the disc round on the screen)
+    const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * aspect, 0.0f };   // (round on the screen)
     bgfx::setUniform(uniformSpell, spellData);
     // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
     bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);

@@ -47,6 +47,9 @@ namespace
     std::atomic<float> levels[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 
     std::atomic<int> requestedFlags{-1};   // -1: never told (the look's default: everything on)
+    // what this frame goes by: requestedFlags taken once a frame (ffuLookFrame), so a switch told mid-frame never splits
+    // a frame (review: the glow's mask on for half a frame's draws made the whole picture its light)
+    std::atomic<int> frameFlags{-1};
     bool tuned = false;                     // the look's values are in FFNx's lighting now
     int lightingAtStart = -1;
     // FFNx's own values when the look took over (put back as the battle ends: FFNx reads its config again only at a new
@@ -64,13 +67,13 @@ extern "C" __declspec(dllexport) void ffu_look(int flags)
 
 bool ffuLookGlow()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_GLOW);
 }
 
 bool ffuLookSharp()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_SHARP);
 }
 
@@ -91,7 +94,7 @@ extern "C" __declspec(dllexport) void ffu_look_spell(float level)
 
 bool ffuLookSpell()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags >= 0 && (flags & LOOK_SPELL);
 }
 
@@ -104,7 +107,7 @@ float ffuLookLevel(int which)
 
 bool ffuLookAtmosphere()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_ATMOSPHERE);
 }
 
@@ -118,19 +121,19 @@ float ffuLookSplit()
 
 bool ffuLookCinema()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_CINEMA);
 }
 
 bool ffuLookCamera()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_CAMERA);
 }
 
 bool ffuLookLighting()
 {
-    int flags = requestedFlags.load();
+    int flags = frameFlags.load();
     return flags < 0 || (flags & LOOK_LIGHTING);
 }
 
@@ -148,7 +151,7 @@ namespace
 
     bool lookWanted()
     {
-        int flags = requestedFlags.load();
+        int flags = frameFlags.load();
         return getmode_cached()->driver_mode == MODE_BATTLE && (flags < 0 || (flags & LOOK_LIGHTING)) && shown.load();
     }
 
@@ -183,6 +186,7 @@ bool ffuLookShown()
 // At the flip, before FFNx's lighting draws (common_flip).
 void ffuLookFrame()
 {
+    frameFlags.store(requestedFlags.load());
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
     ffuSurveyFrame();
     ffuFF8LookFrame();

@@ -37,7 +37,7 @@ uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y
 uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame); x also FF8's slope within each triangle
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
-uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its disc's radius (uv)
+uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
 
 // The view depth of FF8's depth z: on its stage's line where the stage's depths lie (FF8 pushes the stage back behind
@@ -98,17 +98,14 @@ vec4 skyColour(float backdrop)
     return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
 }
 
-// The spells' light round this pixel (as FF7's pass: FFNx.ffuff7look.frag): the effects' blurred light over a disc.
+// The spells' light round this pixel (as FF7's pass: FFNx.ffuff7look.frag): the effects' light, blurred wide.
 vec3 spellLight(vec2 uv)
 {
-    vec3 sum = texture2D(s_ff8Light, uv).rgb;
-    for (int ring = 1; ring <= 3; ring++)
-        for (int k = 0; k < 8; k++)
-        {
-            float a = (float(k) + 0.33 * float(ring)) * 0.785398;
-            sum += texture2D(s_ff8Light, uv + vec2(cos(a), sin(a)) * u_ff8Spell.yz * (float(ring) / 3.0)).rgb;
-        }
-    return sum / 25.0;
+    // (the light comes blurred about a tenth of the picture wide, at a sixteenth of its size: ffu_glow.cpp; four more
+    // taps a little apart smooth its texels)
+    vec2 o = u_ff8Spell.yz;
+    return (2.0 * texture2D(s_ff8Light, uv).rgb + texture2D(s_ff8Light, uv + vec2(o.x, 0.0)).rgb + texture2D(s_ff8Light, uv - vec2(o.x, 0.0)).rgb
+        + texture2D(s_ff8Light, uv + vec2(0.0, o.y)).rgb + texture2D(s_ff8Light, uv - vec2(0.0, o.y)).rgb) / 6.0;
 }
 
 vec2 uvAt(vec3 p)
