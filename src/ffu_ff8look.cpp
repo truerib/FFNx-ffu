@@ -291,6 +291,18 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
     return true;
 }
 
+// FF8's own depth for its battle's characters, for a visitor drawn among them (mixed parties: the bridge's visitor_ff8.c):
+// z = slope x view depth + offset, with rhw = 1 / view depth (1/rhw is the view depth in FF8's world units: its floor
+// plane checks out against it). The line this battle's frames fitted from FF8's own vertices, or as measured on the beach
+// and the grassland (8.754e-6, 0.0029) before one is fitted or with the look off. (A visitor given z = d x 1.5236e-5 +
+// 0.0015 with d an eighth of its view depth stood about 4.6 times nearer than FF8's own at its depth: on top of
+// everything; Richard 2026-10-22.) From FF8's game thread, as it draws.
+extern "C" __declspec(dllexport) void ffu_ff8_depth_line(float *slope, float *offset)
+{
+    if (slope) *slope = lastLines.slope > 0.0f ? lastLines.slope : CHARACTERS_SLOPE;
+    if (offset) *offset = lastLines.slope > 0.0f ? lastLines.offset : CHARACTERS_OFFSET;
+}
+
 // Once a frame (ffuLookFrame, at the flip, before the frame is shown): a frame with 3D and no flat draw is lit here;
 // outside battles the pass's program and target are made, so nothing is made as a battle starts (Rules 59, 89).
 void ffuFF8LookFrame()
