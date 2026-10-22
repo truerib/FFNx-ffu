@@ -20,7 +20,7 @@
 // the backdrop's colour; the backdrop itself, effect pixels (the glow's alpha mask) and nothing drawn are left as they
 // are; then the bars, black.
 
-$input v_texcoord0
+$input v_texcoord0, v_ffu
 
 #include <bgfx/bgfx_shader.sh>
 
@@ -38,15 +38,6 @@ uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its r
 uniform vec4 u_ff7Grade;   // the colour grade: x its strength (0: off)
 
 #include "FFNx.ffugrade.sh"
-
-// The picture's middle grey for the grade: the mean brightness of 16 places on a grid (the same texels for every pixel)
-float gradeMiddle()
-{
-    float sum = 0.0;
-    for (int k = 0; k < 16; k++)
-        sum += dot(texture2D(s_ff7Scene, vec2((float(k - (k / 4) * 4) + 0.5) / 4.0, (float(k / 4) + 0.5) / 4.0)).rgb, vec3(0.299, 0.587, 0.114));
-    return sum / 16.0;
-}
 
 float viewDepth(float d)
 {
@@ -200,7 +191,7 @@ void main()
             shown = mix(shown, sky.rgb / sky.w, haze);
         }
     }
-    if (u_ff7Grade.x > 0.0) shown = ffuGrade(shown, u_ff7Grade.x, gradeMiddle());   // (the whole 3D picture, before FF7's menus)
+    if (u_ff7Grade.x > 0.0) shown = ffuGrade(shown, u_ff7Grade.x, v_ffu.x);   // (the whole 3D picture, before FF7's menus)
     shown *= step(u_ff7Haze.z, v_texcoord0.y) * step(v_texcoord0.y, 1.0 - u_ff7Haze.z);   // (the bars: black, never shaken)
     gl_FragColor = vec4(shown, scene.a);
 }

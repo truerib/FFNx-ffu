@@ -29,6 +29,10 @@ void main()
     // The backdrop and the sky's colour, the same for every pixel: once here (FFNx.ffuff8look.sh)
     float backdrop = backdropDepth();
     vec4 sky = backdrop < 1e29 ? skyColour(backdrop) : vec4_splat(0.0);
-    v_ffu = vec4(backdrop, sky.w, 0.0, 0.0);
+    // The colour grade's middle grey (FFNx.ffugrade.sh): the mean brightness of 64 places on an 8 x 8 grid
+    float sum = 0.0;
+    for (int k = 0; k < 64; k++)
+        sum += dot(texture2DLod(s_ff8Scene, vec2((float(k - (k / 8) * 8) + 0.5) / 8.0, (float(k / 8) + 0.5) / 8.0), 0.0).rgb, vec3(0.299, 0.587, 0.114));
+    v_ffu = vec4(backdrop, sky.w, sum / 64.0, 0.0);
     v_ffucap = vec4(sky.rgb, 0.0);
 }

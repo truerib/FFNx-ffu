@@ -31,15 +31,6 @@ $input v_texcoord0, v_ffu, v_ffucap
 
 uniform vec4 u_ff8Grade;   // the colour grade: x its strength (0: off)
 
-// The picture's middle grey for the grade: the mean brightness of 16 places on a grid (the same texels for every pixel)
-float gradeMiddle()
-{
-    float sum = 0.0;
-    for (int k = 0; k < 16; k++)
-        sum += dot(texture2D(s_ff8Scene, vec2((float(k - (k / 4) * 4) + 0.5) / 4.0, (float(k / 4) + 0.5) / 4.0)).rgb, vec3(0.299, 0.587, 0.114));
-    return sum / 16.0;
-}
-
 bool onFloor(vec2 uv, float z)
 {
     float floorDepth = floorAt(uv);
@@ -142,7 +133,7 @@ void main()
     if (backdropAt(uv, z, backdrop))
     {
         if (u_ff8Haze.w > 1.5) { gl_FragColor = vec4(0.0, 0.0, 0.3, scene.a); return; }   // (the shadow view: the backdrop dark blue)
-        gl_FragColor = u_ff8Grade.x > 0.0 ? vec4(ffuGrade(scene.rgb, u_ff8Grade.x, gradeMiddle()), scene.a) : scene;   // FF8's sky or nothing of its 3D: as FF8 drew it (graded)
+        gl_FragColor = u_ff8Grade.x > 0.0 ? vec4(ffuGrade(scene.rgb, u_ff8Grade.x, v_ffu.z), scene.a) : scene;   // FF8's sky or nothing of its 3D: as FF8 drew it (graded)
         return;
     }
     vec2 t = u_ff8Frame.zw;
@@ -239,6 +230,6 @@ void main()
             shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
     }
     vec3 result = mix(shaded, scene.rgb, effect);
-    if (u_ff8Grade.x > 0.0) result = ffuGrade(result, u_ff8Grade.x, gradeMiddle());   // (the whole 3D picture, before FF8's HUD)
+    if (u_ff8Grade.x > 0.0) result = ffuGrade(result, u_ff8Grade.x, v_ffu.z);   // (the whole 3D picture, before FF8's HUD)
     gl_FragColor = u_ff8Haze.w > 1.5 ? vec4(vec3_splat(shadowSeen), scene.a) : vec4(result, scene.a);
 }
