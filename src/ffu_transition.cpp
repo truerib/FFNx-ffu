@@ -40,7 +40,8 @@ namespace
     constexpr DWORD ARMED_MOST_MS = 12000;
 
     std::atomic<int> armed{0}, held{0};
-    int mode;            // 1: held at its first lit frame until shown; 2: caught up with the own battle engine's opening
+    int mode;            // 1: held at its first lit frame until shown; 2: held at its opening's first frame until the own
+                         // battle engine's opening begins (or its window shows), then caught up with it, never held after
     DWORD armedAt, battleFrom;
     int fadeSeen, unpaced;
     bool swirlCut, battleSeen;
@@ -70,7 +71,13 @@ namespace
         ffnx_info("FFU transition: %s (%d frames unpaced, %u ms after the cut)\n", why, unpaced, unsigned(GetTickCount() - armedAt));
     }
 
-    // Held on FF8's own thread until its window shows: its messages pumped (a WM_QUIT put back for its own loop).
+    bool released()
+    {
+        return shown() || (mode == 2 && ownOpeningFrame() >= 0);
+    }
+
+    // Held on FF8's own thread until its window shows (mode 2: or the own battle engine's opening begins, the bridge
+    // hearing the hub on a thread of its own): its messages pumped (a WM_QUIT put back for its own loop).
     void hold()
     {
         held = 1;
@@ -79,7 +86,7 @@ namespace
                   unsigned(from - armedAt), unsigned(from - battleFrom));
         MSG message;
         bool quit = false;
-        while (!shown() && !quit && GetTickCount() - from < HOLD_MOST_MS)
+        while (!released() && !quit && GetTickCount() - from < HOLD_MOST_MS)
         {
             while (PeekMessageA(&message, nullptr, 0, 0, PM_REMOVE))
             {
@@ -96,7 +103,8 @@ namespace
         }
         held = 0;
         ffnx_info("FFU transition: let go after %u ms (%s)\n", unsigned(GetTickCount() - from),
-                  shown() ? "its window shown" : quit ? "the game quits" : "never shown: held long enough");
+                  shown() ? "its window shown" : mode == 2 && ownOpeningFrame() >= 0 ? "the engine's opening began"
+                  : quit ? "the game quits" : "never shown: held long enough");
     }
 }
 
@@ -167,21 +175,24 @@ bool ffuTransitionLimit()
         }
         if (step == 2 && mode == 2)
         {
-            const int target = ownOpeningFrame();
-            if (target >= 0 && ++fadeSeen >= target)
+            int target = ownOpeningFrame();
+            if (target < 0)   // its opening's first frame drawn before the engine's began (the swirl still up): waits
+            {
+                hold();
+                target = ownOpeningFrame();
+                if (target < 0)
+                {
+                    disarm(shown() ? "its window shown (the engine gave its battle back)" : "the engine's opening never came");
+                    return false;
+                }
+            }
+            if (++fadeSeen >= target)
             {
                 disarm("caught up with the engine's opening");
                 ffnx_info("FFU transition: at its opening frame %d, the engine's %d, %u ms after the cut\n", fadeSeen, target,
                           unsigned(GetTickCount() - armedAt));
                 return false;
             }
-            if (target < 0 && fadeSeen >= FADE_FRAMES)   // (no opening from the engine yet: held as before, never further)
-            {
-                hold();
-                disarm("held and let go (the engine's opening never came)");
-                return false;
-            }
-            if (target < 0) ++fadeSeen;
         }
         else if (step == 2 && ++fadeSeen > FADE_FRAMES)
         {
