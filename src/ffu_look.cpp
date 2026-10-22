@@ -406,7 +406,8 @@ static void logBattleFrames()
     LARGE_INTEGER now;
     if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
     QueryPerformanceCounter(&now);
-    const bool battle = getmode_cached()->driver_mode == MODE_BATTLE;
+    // (from the swirl on: where a battle's start and its hand-over spend their time, frame by frame)
+    const bool battle = getmode_cached()->driver_mode == MODE_BATTLE || getmode_cached()->driver_mode == MODE_SWIRL;
     auto ms = [&](LARGE_INTEGER a, LARGE_INTEGER b) { return double(b.QuadPart - a.QuadPart) * 1000.0 / double(frequency.QuadPart); };
     if (!battle)
     {
@@ -419,7 +420,7 @@ static void logBattleFrames()
         battleFrom = secondFrom = now;
         frames = slow = 0;
         worst = total = gpuWorst = gpuTotal = 0.0;
-        ffnx_info("FFU frames: a battle begins\n");
+        ffnx_info("FFU frames: a battle begins (%s)\n", getmode_cached()->driver_mode == MODE_SWIRL ? "its swirl" : "its battle");
     }
     else
     {
@@ -428,7 +429,14 @@ static void logBattleFrames()
         if (visible != wasVisible)
             ffnx_info("FFU frames: the window %s %.2f s into the battle\n", visible ? "shown" : "hidden", ms(battleFrom, now) / 1000.0);
         wasVisible = visible;
+        static int wasMode = -1;
+        const int mode = getmode_cached()->driver_mode;
+        if (mode != wasMode)
+            ffnx_info("FFU frames: %s %.2f s in\n", mode == MODE_SWIRL ? "the swirl" : "the battle", ms(battleFrom, now) / 1000.0);
+        wasMode = mode;
         const double frame = ms(last, now);
+        if (frame > 50.0)
+            ffnx_info("FFU frames: a %.0f ms frame %.2f s in (%s)\n", frame, ms(battleFrom, now) / 1000.0, visible ? "shown" : "hidden");
         const bgfx::Stats *stats = bgfx::getStats();
         const double gpu = stats && stats->gpuTimerFreq > 0 ? double(stats->gpuTimeEnd - stats->gpuTimeBegin) * 1000.0 / double(stats->gpuTimerFreq) : -1.0;
         frames++;
