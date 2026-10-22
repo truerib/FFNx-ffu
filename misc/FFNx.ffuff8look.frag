@@ -35,7 +35,7 @@ uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one t
 uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0)
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
-uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), y 1 / its range, z its most (0: none), w the backdrop's depth
+uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none)
 
 vec3 viewAt(vec2 uv)
 {
@@ -47,20 +47,32 @@ vec3 viewAt(vec2 uv)
     return vec3(xz * Z, yz * Z, Z);
 }
 
-// FF8's backdrop (its sky dome, far 3D) or nothing drawn at all.
-bool backdropAt(float z)
+// FF8's backdrop (its sky dome, far 3D), from the picture's top: the farthest of 8 places there, and what stands within
+// 80% of it (a dome round the camera is nearer at the picture's corners, about 0.79 of its farthest).
+float backdropDepth()
 {
-    return z >= 0.9999 || z <= 0.0001 || (z - u_ff8Depth.y) / u_ff8Depth.x >= u_ff8Haze.w;
+    float farthest = 0.0;
+    for (int k = 0; k < 8; k++)
+    {
+        float t = texture2D(s_ff8Depth, vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18)).x;
+        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, (t - u_ff8Depth.y) / u_ff8Depth.x);
+    }
+    return farthest > 0.0 ? 0.8 * farthest : 1e30;
+}
+
+bool backdropAt(float z, float backdrop)
+{
+    return z >= 0.9999 || z <= 0.0001 || (z - u_ff8Depth.y) / u_ff8Depth.x >= backdrop;
 }
 
 // The sky's colour: the backdrop near the picture's top (8 places); w how many were the backdrop (outdoors).
-vec4 skyColour()
+vec4 skyColour(float backdrop)
 {
     vec4 sum = vec4_splat(0.0);
     for (int k = 0; k < 8; k++)
     {
         vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
-        if (backdropAt(texture2D(s_ff8Depth, at).x)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
+        if (backdropAt(texture2D(s_ff8Depth, at).x, backdrop)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
     }
     return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
 }
@@ -77,7 +89,8 @@ void main()
     vec2 uv = v_texcoord0;
     vec4 scene = texture2D(s_ff8Scene, uv);
     float z = texture2D(s_ff8Depth, uv).x;
-    if (backdropAt(z))
+    float backdrop = backdropDepth();
+    if (backdropAt(z, backdrop))
     {
         gl_FragColor = scene;   // FF8's sky or nothing of its 3D: as FF8 drew it
         return;
@@ -129,11 +142,12 @@ void main()
     float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
     vec3 shaded = scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545));
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
-    if (u_ff8Haze.z > 0.0)
+    if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {
-        vec4 sky = skyColour();
-        if (sky.w >= 2.0)
-            shaded = mix(shaded, sky.rgb, u_ff8Haze.z * clamp((p.z - u_ff8Haze.x) * u_ff8Haze.y, 0.0, 1.0));
+        vec4 sky = skyColour(backdrop);
+        float outdoors = smoothstep(1.6, 2.4, backdrop / max(u_ff8Haze.x, 1.0));   // (as FF7's: no step as cameras move)
+        if (sky.w >= 2.0 && backdrop > u_ff8Haze.x)
+            shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
     }
     float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a * 3.0, 0.0, 1.0) : 0.0;
     gl_FragColor = vec4(mix(shaded, scene.rgb, effect), scene.a);

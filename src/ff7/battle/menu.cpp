@@ -29,6 +29,8 @@
 #include "defs.h"
 #include "gl.h"
 
+void ffuFF7BeforeDepthClear();   // Final Fantasy Universe (ffu_ff7look.cpp)
+
 namespace ff7::battle
 {
     void battle_menu_enter()
@@ -43,8 +45,7 @@ namespace ff7::battle
     {
         if(gl_defer_battle_depth_clear()) return;
 
-        void ffuFF7BeforeDepthClear();   // Final Fantasy Universe: FF7's battle haze and bars, before the menus (ffu_ff7look.cpp)
-        ffuFF7BeforeDepthClear();
+        ::ffuFF7BeforeDepthClear();   // Final Fantasy Universe: FF7's battle haze and bars, before the menus (ffu_ff7look.cpp)
         newRenderer.clearDepthBuffer();
     }
 

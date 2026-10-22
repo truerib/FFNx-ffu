@@ -80,7 +80,13 @@ namespace
         const uint16_t e100 = *ff7_externals.effect100_counter, e60 = ff7_externals.effect60_counter ? *ff7_externals.effect60_counter : 0,
             e10 = ff7_externals.effect10_counter ? *ff7_externals.effect10_counter : 0;
         const bool effects = e100 > 0 || e60 > 0 || e10 > 0;   // (checked live: Barret's Big Shot is 0x14 with effects 0 5 0, then 1 2 0)
-        return effects && (cinematicCommand(command) || cinematicCommand(last));
+        // Decided as FF7's effects begin, from the command then: the command fields are left as they were between actions,
+        // so a later spell's effects never raise the bars on a Limit's old command (Sonnet review)
+        static bool hadEffects = false, cinematic = false;
+        if (effects && !hadEffects)
+            cinematic = cinematicCommand(command) || cinematicCommand(last);
+        hadEffects = effects;
+        return effects && cinematic;
     }
 
     // The bars' weight this frame, eased: in over 0.45 s, held 1 s after the cinematic (a Limit's effects pause about 0.9 s
@@ -105,14 +111,25 @@ namespace
 }
 
 // From gl_draw_indexed_primitive for every draw of an FF7 battle frame (with FFNx's lighting on, as its deferred draws
-// are drawn at the flip): notes that FF7's 3D has begun. The pass itself goes just before FF7 clears its depth for its
-// menus (ffuFF7BeforeDepthClear: FFNx's battle_depth_clear, deferred in draw order), or at the frame's end.
+// are drawn at the flip): notes that FF7's 3D has begun. The pass goes just before FF7 clears its depth for its menus
+// (ffuFF7BeforeDepthClear: FFNx's battle_depth_clear, deferred in draw order), else at its first flat draw after the
+// 3D, else at the frame's end.
 bool ffuFF7LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
-    (void)vertices; (void)vertexcount;
-    if (!ff8 && vertextype != TLVERTEX && getmode_cached()->driver_mode == MODE_BATTLE)
+    if (ff8 || getmode_cached()->driver_mode != MODE_BATTLE)
+        return false;
+    if (vertextype != TLVERTEX)
+    {
         seen3D = true;
-    return false;
+        return false;
+    }
+    // A frame whose menus never clear the depth (a summon's, a limit's): its first flat draw after the 3D (its banner,
+    // its numbers) has the pass go first, so FF7's 2D stays on top (Sonnet review)
+    if (passedThisFrame || !seen3D || !ffuLookShown()) return false;
+    for (uint32_t i = 0; i < vertexcount; i++)
+        if (vertices[i].color.w != 1.0f) return false;
+    passedThisFrame = true;
+    return true;
 }
 
 // ff7::battle::battle_depth_clear, as it clears FF7's depth before the menus: the picture so far is FF7's 3D.

@@ -53,9 +53,10 @@ namespace
     // The look's balance (the same as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact
     constexpr float AMBIENT = 0.5f, KEY = 0.85f, WRAP = 0.35f, CONTACT = 0.6f;
     // The haze (as FF9's outdoors: BattleScene.cs): from half again the depth FF8's 3D stands at, full (its most) at its
-    // backdrop (the sky dome: FF8 draws its sky as far 3D, with depth), toward the backdrop's own colour near the picture's
-    // top (the shader finds it). The backdrop itself, at 70% of the farthest depth drawn or beyond, is neither lit nor hazed.
-    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f, BACKDROP = 0.7f;   // (a dome round the camera stands nearer at the picture's sides: 0.79 at the corners)
+    // backdrop (the sky dome: FF8 draws its sky as far 3D, with depth), toward the backdrop's own colour. The shader finds
+    // the backdrop from the picture's top (as FF7's does: never from one far vertex, which a summon moves); the backdrop
+    // itself is neither lit nor hazed.
+    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f;
     // FF8's battle camera: its view matrix as FF8's LookAt writes it each frame (0x503230 -> 0x50CB40: int16 rows,
     // 4.12, view = M * world; side-session research 2026-10-22 battle-camera-stick.md), so the main light stays put in
     // FF8's battle world as its cameras swing. Toward the light in that world (y down): high, from one side.
@@ -78,7 +79,7 @@ namespace
     bool passedThisFrame = false;
     uint32_t passes = 0;
     // This frame's depth samples (z against view depth 1 / rhw), every fourth vertex of the 3D draws.
-    double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0, farthest = 0.0;   // (farthest: the backdrop, FF8's sky dome)
+    double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
     uint32_t samples = 0;
 
     struct QuadVertex { float x, y, z, u, v; };
@@ -106,7 +107,6 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
             if (!(rhw > 0.0f && rhw < 0.5f) || !(z > 0.0f && z < 1.0f)) continue;   // (FFNx maps an infinite rhw to 1)
             const double x = 1.0 / rhw, y = z;
             sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
-            if (x > farthest) farthest = x;
             samples++;
         }
         return false;
@@ -126,7 +126,7 @@ void ffuFF8LookFrame()
     if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookLighting() && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
-    sumX = sumY = sumXX = sumXY = farthest = 0.0;
+    sumX = sumY = sumXX = sumXY = 0.0;
     samples = 0;
 }
 
@@ -258,8 +258,7 @@ void Renderer::ffuFF8Light()
     const float look[4] = { AMBIENT * ffuLookLevel(1), 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), std::min(CONTACT * ffuLookLevel(2), 1.0f) };
     const float stage = samples > 0 ? float(sumX / double(samples)) : 10000.0f;   // (the depth FF8's 3D stands at, on average)
     const float hazeMost = ffuLookAtmosphere() ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;
-    const float backdrop = float(farthest) * BACKDROP, start = HAZE_START * stage;
-    const float haze[4] = { start, backdrop > start ? 1.0f / (backdrop - start) : 0.0f, backdrop > start ? hazeMost : 0.0f, backdrop };
+    const float haze[4] = { HAZE_START * stage, 0.0f, hazeMost, 0.0f };
     bgfx::setUniform(uniformLens, lens);
     bgfx::setUniform(uniformCam, cam);
     bgfx::setUniform(uniformFrame, frame);
