@@ -551,6 +551,10 @@ public:
     bool ffuFF8Ready();
     void ffuFF8Prepare();
     void ffuFF8Light();
+    // Final Fantasy Universe: FF7's battle haze and cinematic bars (ffu_ff7look.cpp), before its first flat draw
+    bool ffuFF7Ready();
+    void ffuFF7Prepare();
+    void ffuFF7Pass();
 
     // ---
 

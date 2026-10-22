@@ -233,7 +233,7 @@ target_link_options(
 )
 
 # SHADER COMPILATION
-set(FFNX_SHADERS "FFNx" "FFNx.lighting" "FFNx.shadowmap" "FFNx.field.shadow" "FFNx.overlay" "FFNx.post" "FFNx.post.ntscj" "FFNx.blit" "FFNx.yuvmovie" "FFNx.yuvmovie.truecolor" "FFNx.ffu7" "FFNx.ffu7.lighting" "FFNx.ffulayer" "FFNx.ffuglow" "FFNx.ffuff8look")
+set(FFNX_SHADERS "FFNx" "FFNx.lighting" "FFNx.shadowmap" "FFNx.field.shadow" "FFNx.overlay" "FFNx.post" "FFNx.post.ntscj" "FFNx.blit" "FFNx.yuvmovie" "FFNx.yuvmovie.truecolor" "FFNx.ffu7" "FFNx.ffu7.lighting" "FFNx.ffulayer" "FFNx.ffuglow" "FFNx.ffuff8look" "FFNx.ffuff7look")
 set(SHADERC_EXECUTABLE "${CMAKE_BINARY_DIR}/vcpkg_installed/x86-windows-static/tools/bgfx/shadercRelease")
 set(SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/bin/shaders")
 set(SHADER_LOG "${SHADER_OUTPUT_DIR}/shaderc.log")

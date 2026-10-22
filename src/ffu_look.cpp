@@ -35,7 +35,7 @@
 
 namespace
 {
-    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8, LOOK_ATMOSPHERE = 16;
+    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8, LOOK_ATMOSPHERE = 16, LOOK_CINEMA = 32;
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
     std::atomic<float> levels[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
@@ -50,7 +50,7 @@ namespace
 
 // flags: bit 0 the battle lighting (FF8's: ffu_ff8look.cpp), bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp),
 // bit 3 the stick camera (FF7's held across action cameras: ff7/battle/camera.cpp; FF8's is the bridge's own), bit 4 the
-// atmosphere (FF8's haze: ffu_ff8look.cpp).
+// atmosphere (the haze: ffu_ff8look.cpp, ffu_ff7look.cpp), bit 5 the cinematic bars (FF7's: ffu_ff7look.cpp).
 extern "C" __declspec(dllexport) void ffu_look(int flags)
 {
     requestedFlags.store(flags);
@@ -88,6 +88,12 @@ bool ffuLookAtmosphere()
     return flags < 0 || (flags & LOOK_ATMOSPHERE);
 }
 
+bool ffuLookCinema()
+{
+    int flags = requestedFlags.load();
+    return flags < 0 || (flags & LOOK_CINEMA);
+}
+
 bool ffuLookCamera()
 {
     int flags = requestedFlags.load();
@@ -102,6 +108,7 @@ bool ffuLookLighting()
 
 void ffuSurveyFrame();    // ffu_survey.cpp
 void ffuFF8LookFrame();   // ffu_ff8look.cpp
+void ffuFF7LookFrame();   // ffu_ff7look.cpp
 
 namespace
 {
@@ -148,6 +155,7 @@ void ffuLookFrame()
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
     ffuSurveyFrame();
     ffuFF8LookFrame();
+    ffuFF7LookFrame();
     if (ff8)
         return;
     bool battle = getmode_cached()->driver_mode == MODE_BATTLE;

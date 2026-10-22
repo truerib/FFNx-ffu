@@ -334,6 +334,8 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	// Final Fantasy Universe: FF8's battle lighting before its first flat draw (ffu_ff8look.cpp)
 	bool ffuFF8LookDraw(uint32_t, const struct nvertex *, uint32_t);
 	if (ffuFF8LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF8Light();
+	bool ffuFF7LookDraw(uint32_t, const struct nvertex *, uint32_t);   // FF7's haze and cinematic bars (ffu_ff7look.cpp)
+	if (ffuFF7LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF7Pass();
 
 	bool isLightingEnabledTexture = true;
 
