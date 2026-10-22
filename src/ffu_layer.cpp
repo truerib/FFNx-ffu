@@ -96,7 +96,8 @@ namespace
     // Ragnarok at the default zoom fits; a 1280 x 800 box cut it in half), so nothing is remade in flight (see
     // ffuLayerPrepare) and a host's textures keep their size. It follows the airship from the alpha of the last
     // frames (the chase camera always looks at it, so it hardly moves).
-    constexpr uint16_t MAX_CROP_WIDTH = 2048, MAX_CROP_HEIGHT = 1600;   // the shared file's room
+    constexpr uint16_t MAX_CROP_WIDTH = 2048, MAX_CROP_HEIGHT = 1600;   // the flown airship's box at most
+    constexpr uint16_t MAX_BATTLE_WIDTH = 2560, MAX_BATTLE_HEIGHT = 1600;   // a battle's whole frame at most (the file's room)
     uint16_t cropWidth = MAX_CROP_WIDTH, cropHeight = MAX_CROP_HEIGHT;
     DWORD mapRetryAt = 0;       // the shared file couldn't be mapped: try again from then
     float cropCentre[2] = { -1.0f, -1.0f };
@@ -204,7 +205,7 @@ namespace
         if (shared && sharedSize >= needed) return shared;
         if (shared) return nullptr;   // bigger than the room made for the largest crop: not supported
         if (mapRetryAt && (LONG)(GetTickCount() - mapRetryAt) < 0) return nullptr;
-        needed = std::max(needed, sizeof(LayerHeader) + (size_t)MAX_CROP_WIDTH * MAX_CROP_HEIGHT * 8);
+        needed = std::max(needed, sizeof(LayerHeader) + (size_t)MAX_BATTLE_WIDTH * MAX_BATTLE_HEIGHT * 8);
         char path[64];
         layerPath(path, ownGame());
         mapRetryAt = GetTickCount() + 5000;   // until it works, at most one try every 5 s
@@ -489,7 +490,11 @@ void Renderer::ffuLayerPrepare()
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
     if (bgfx::isValid(ffuLayerFrameBuffer) && width == ffuLayerWidth && height == ffuLayerHeight) return;
     for (const auto &slot : ffuLayerSlots) if (slot.pending) return;   // a resolution change: once the reads are in
-    const uint16_t readWidth = std::min(cropWidth, width), readHeight = std::min(cropHeight, height);
+    // (a battle's layer is the whole frame: the own battle engine lays it over its whole picture, and a box following what
+    // it covers cut its menus' edges and was laid stretched, 2026-10-23; the flown airship's stays a box round it)
+    const bool battle = battleWanted() || warming;
+    const uint16_t readWidth = std::min(battle ? MAX_BATTLE_WIDTH : cropWidth, width);
+    const uint16_t readHeight = std::min(battle ? MAX_BATTLE_HEIGHT : cropHeight, height);
     if (bgfx::isValid(ffuLayerFrameBuffer)) bgfx::destroy(ffuLayerFrameBuffer);
     for (auto &slot : ffuLayerSlots)
         for (auto &texture : slot.read) if (bgfx::isValid(texture)) bgfx::destroy(texture);
