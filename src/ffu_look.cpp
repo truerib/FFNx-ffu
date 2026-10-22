@@ -190,8 +190,8 @@ void ffuLookShake(float shake[4])
     if (!(age < shakeFor) || !ffuLookImpact())
         return;
     const float fade = 1.0f - age / shakeFor, size = shakeSize * fade * fade;
-    shake[0] = size * sinf(age * 71.0f);
-    shake[1] = size * cosf(age * 53.0f) * 1.3f;
+    shake[0] = size * sinf(age * 37.0f);   // (about 6 and 5 Hz: a jolt, not a buzz)
+    shake[1] = size * cosf(age * 29.0f) * 1.3f;
     shake[2] = 1.0f + 2.6f * shakeSize;
 }
 
