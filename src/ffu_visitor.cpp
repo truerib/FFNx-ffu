@@ -228,3 +228,40 @@ extern "C" __declspec(dllexport) int ffu_visitor_draw_tl(const ffu_visitor_tl_ve
 	gl_load_state(&saved);
 	return 1;
 }
+
+// A guest's battle layer (ffu_layer.cpp layGuest): one quad in this game's own 2D units, its corners xy (x0 y0 .. x3 y3,
+// clockwise from the top left) and its texture coordinates, added over the picture (FF7's and FF9's effects add, so their
+// black is nothing), no depth.
+void ffuVisitorDrawLayerQuad(uint16_t texture, const float *xy, float u0, float v0, float u1, float v1)
+{
+	if (texture == 0xFFFF || xy == nullptr) return;
+	const float uv[8] = { u0, v0, u1, v0, u1, v1, u0, v1 };
+	vertexBuffer.resize(4);
+	for (uint32_t k = 0; k < 4; k++)
+	{
+		nvertex& to = vertexBuffer[k];
+		memset(&to, 0, sizeof(to));
+		to._.x = xy[k * 2];
+		to._.y = xy[k * 2 + 1];
+		to._.z = 0.0f;
+		to.color.w = 1.0f;
+		to.color.color = 0xFFFFFFFF;
+		to.color.specular = 0xFF000000;
+		to.u = uv[k * 2];
+		to.v = uv[k * 2 + 1];
+	}
+	static const WORD quad[6] = { 0, 1, 2, 0, 2, 3 };
+	indexBuffer.assign(quad, quad + 6);
+
+	struct driver_state saved;
+	gl_save_state(&saved);
+	plainTexture(texture);
+	gl_set_blend_func(BLEND_ADD);
+	internal_set_renderstate(V_NOCULL, 1, nullptr);
+	internal_set_renderstate(V_DEPTHTEST, 0, nullptr);
+	internal_set_renderstate(V_DEPTHMASK, 0, nullptr);
+	internal_set_renderstate(V_ALPHATEST, 0, nullptr);
+	gl_draw_indexed_primitive(RendererPrimitiveType::PT_TRIANGLES, TLVERTEX, vertexBuffer.data(), nullptr, 4,
+		indexBuffer.data(), 6, nullptr, nullptr, nullptr, 0, true);
+	gl_load_state(&saved);
+}

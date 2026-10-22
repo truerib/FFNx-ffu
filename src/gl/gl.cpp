@@ -336,6 +336,9 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	if (ffuFF8LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF8Light();
 	bool ffuFF7LookDraw(uint32_t, const struct nvertex *, uint32_t);   // FF7's haze and cinematic bars (ffu_ff7look.cpp)
 	if (ffuFF7LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF7Pass();
+	bool ffuGuestLayersDraw(uint32_t, const struct nvertex *, uint32_t);   // a mixed party's guest effects (ffu_layer.cpp)
+	void ffuGuestLayersCompose();
+	if (ffuGuestLayersDraw(vertextype, vertices, vertexcount)) ffuGuestLayersCompose();
 
 	bool isLightingEnabledTexture = true;
 

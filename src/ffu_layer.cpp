@@ -34,9 +34,14 @@
 #include <cstdlib>
 
 #include "renderer.h"
+#include "gl.h"
 #include "log.h"
 #include "utils.h"
 #include "common.h"
+
+extern int wide_viewport_x, wide_viewport_width;   // widescreen.cpp
+void ffuVisitorDrawLayerQuad(uint16_t texture, const float *xy, float u0, float v0, float u1, float v1);   // ffu_visitor.cpp
+void ffuGuestLayersFrameEnd();   // below: a guest's battle layer laid into ours
 
 namespace
 {
@@ -59,8 +64,10 @@ namespace
         float unitsPerR;                  // the publisher's units per planet radius for the flight camera this frame
         float nearDistance, farDistance;  // FFU_LAYER_DEPTH_PACKED: the range t spans (publisher's units)
         char id[24];                      // what it shows: the airship's model id (mesh/airships/<id>.gltf)
-        uint32_t covered;                 // pixels with alpha on the publisher's sampling grid: 0 = nothing shown
-        uint32_t reserved[5];
+        uint32_t covered;                 // pixels with alpha or colour on the publisher's sampling grid: 0 = nothing shown
+        float anchors[4];                 // a battle layer's two anchors (x0, y0, x1, y1, pixels of the full picture), where
+                                          //   the host's seat and its monsters' middle fall in it (mixed parties; else 0)
+        uint32_t anchored;                // 1: anchors hold this frame's (the bridge set them as it was drawn)
     };
     static_assert(sizeof(LayerHeader) == 128, "the readers expect a 128-byte header");
     constexpr uint32_t FFU_LAYER_DEPTH_FF7 = Renderer::FFU_LAYER_DEPTH_FF7, FFU_LAYER_DEPTH_PACKED = Renderer::FFU_LAYER_DEPTH_PACKED,
@@ -94,7 +101,7 @@ namespace
     float cropCentre[2] = { -1.0f, -1.0f };
     double readbackTotal = 0, readbackMax = 0, publishTotal = 0, publishMax = 0;
     uint32_t framesWaitedTotal = 0, published = 0, skipped = 0;
-    struct Meta { char id[24]; float unitsPerR; uint32_t depthFormat; };
+    struct Meta { char id[24]; float unitsPerR; uint32_t depthFormat; float anchors[4]; uint32_t anchored; };
     Meta captured = {};
     Meta slotMeta[3] = {};
 
@@ -108,22 +115,47 @@ namespace
         return clip[3] != 0.0f ? clip[2] / clip[3] : 0.0f;
     }
 
-    // Mixed parties (docs/shared-engine.md "the guest's effects"): the FF7 bridge asks for whole battle frames in the layer
-    // while its hidden battle plays a guest's move (mods/bridge-ff7 layer_ff7.c hides FF7's stage, bodies, numbers and
-    // menu and sets the host's camera), so the host lays the guest's own effects into its battle: {'F7BL', version, on}.
-    struct BattleAsk { uint32_t magic, version; volatile LONG on; };
+    // Mixed parties (docs/shared-engine.md "the guest's effects"): the game's bridge asks for whole battle frames in the
+    // layer while its hidden battle plays a guest's move (mods/bridge-ff7 layer_ff7.c hides FF7's stage, bodies, numbers and
+    // menu and sets the host's camera), so the host lays the guest's own effects into its battle. FF7's bridge (dinput8.dll)
+    // exports ffu_ff7_battle_layer {'F7BL', version, on}, FF8's (dinput.dll) ffu_ff8_battle_layer {'F8BL', ...}; from
+    // version 2 also the two anchors of the frame being drawn, in the game's own screen units (its 2D's), so the host
+    // places each frame by its own anchors.
+    struct BattleAsk { uint32_t magic, version; volatile LONG on; float anchors[4]; volatile LONG anchored; };
     const BattleAsk *battleAsk()
     {
         static const BattleAsk *found = nullptr;
         static DWORD lastLook = 0;
-        if (found || ff8) return found;
+        if (found) return found;
         const DWORD now = GetTickCount();
         if (lastLook && now - lastLook < 1000) return nullptr;   // look again once a second
         lastLook = now;
-        HMODULE bridge = GetModuleHandleA("dinput8.dll");
-        auto candidate = bridge ? (const BattleAsk *)GetProcAddress(bridge, "ffu_ff7_battle_layer") : nullptr;
-        if (candidate && candidate->magic == 0x4C423746u && candidate->version >= 1) found = candidate;
+        HMODULE bridge = GetModuleHandleA(ff8 ? "dinput.dll" : "dinput8.dll");
+        auto candidate = bridge ? (const BattleAsk *)GetProcAddress(bridge, ff8 ? "ffu_ff8_battle_layer" : "ffu_ff7_battle_layer") : nullptr;
+        if (candidate && candidate->magic == (ff8 ? 0x4C423846u : 0x4C423746u) && candidate->version >= 1) found = candidate;
         return found;
+    }
+
+    // This battle frame's id and anchors (in the layer's full picture: the game's 2D units through FFNx's own widescreen
+    // mapping, Renderer::getInternalCoordX/Y, at the layer's size).
+    void battleMeta(Meta &meta, uint16_t layerWidth, uint16_t layerHeight)
+    {
+        _snprintf(meta.id, sizeof(meta.id), "%s_battle", ownGame());
+        meta.id[sizeof(meta.id) - 1] = 0;
+        meta.unitsPerR = 1.0f;
+        meta.depthFormat = 0;
+        meta.anchored = 0;
+        const BattleAsk *ask = battleAsk();
+        if (!ask || ask->version < 2 || !ask->anchored || !layerWidth || !game_height) return;
+        const float left = widescreen_enabled ? (float)wide_viewport_x : 0.0f;
+        const float width = widescreen_enabled ? (float)wide_viewport_width : (float)game_width;
+        if (width <= 0.0f) return;
+        for (int k = 0; k < 4; k += 2)
+        {
+            meta.anchors[k] = (ask->anchors[k] - left) * layerWidth / width;
+            meta.anchors[k + 1] = ask->anchors[k + 1] * layerHeight / (float)game_height;
+        }
+        meta.anchored = 1;
     }
 
     bool battleWanted()
@@ -193,6 +225,10 @@ namespace
         uint32_t frames = 0, torn = 0, composited = 0;
         double copyMs = 0.0;
         bool lastLive = false;               // what the last ffuLayerLive said, for the switch log
+        float hostAnchors[4] = {};           // a guest's battle layer: where its two anchors fall in our battle (our 2D units),
+        uint32_t placedFrame = UINT32_MAX;   //   from our bridge (ffu_guest_layer_place), and our frame it said so in
+        uint32_t laidIn = 0;                 // frames of its battle layer added to ours (logged)
+        bool lastLaid = false;
     };
     Guest guests[] = { { "ff7" }, { "ff8" }, { "ff9" } };
 
@@ -290,6 +326,54 @@ namespace
         return age > -(LONGLONG)frequency.QuadPart && age < (LONGLONG)(LIVE_SECONDS * frequency.QuadPart);
     }
 
+    // ---- A guest's battle layer in our battle (mixed parties: its own spell and limit effects) ----
+    // Our bridge says each battle frame where the guest's two anchors fall in ours (it projects our seat and our monsters'
+    // middle with our own camera); the guest's frame carries where they fell in its picture. The two pairs give a
+    // similarity (a turn, a scale and a shift), and the guest's frame is added over our 3D through it, under our HUD: at
+    // the first flat draw after a battle frame's 3D (FF7: its menus; FF8: its HUD), else at the frame's end.
+    bool guestSeen3D = false, guestLaid = false;
+
+    void layGuest(Guest &guest)
+    {
+        const LayerHeader &h = guest.header;
+        const float gx = h.anchors[2] - h.anchors[0], gy = h.anchors[3] - h.anchors[1];
+        const float hx = guest.hostAnchors[2] - guest.hostAnchors[0], hy = guest.hostAnchors[3] - guest.hostAnchors[1];
+        const float gg = gx * gx + gy * gy;
+        if (gg < 4.0f || hx * hx + hy * hy < 1.0f) return;   // (anchors on top of each other: no turn or scale to take)
+        const float a = (hx * gx + hy * gy) / gg, b = (hy * gx - hx * gy) / gg;   // (host = a,b x guest: complex division)
+        auto place = [&](float x, float y, float *out)
+        {
+            const float dx = x - h.anchors[0], dy = y - h.anchors[1];
+            out[0] = guest.hostAnchors[0] + a * dx - b * dy;
+            out[1] = guest.hostAnchors[1] + b * dx + a * dy;
+        };
+        const float x0 = h.cropX, y0 = h.cropY, x1 = x0 + h.width, y1 = y0 + h.height;
+        float xy[8];
+        place(x0, y0, xy); place(x1, y0, xy + 2); place(x1, y1, xy + 4); place(x0, y1, xy + 6);
+        ffuVisitorDrawLayerQuad(guest.colour.idx, xy, 0.0f, 0.0f, 1.0f, 1.0f);
+        ++guest.laidIn;
+    }
+
+    void layGuests()
+    {
+        guestLaid = true;
+        for (auto &guest : guests)
+        {
+            if (!strcmp(guest.game, ownGame()) || guest.placedFrame == UINT32_MAX || newRenderer.ffuLastFrame - guest.placedFrame > 30)
+                continue;   // (our own, or no seat of that game placed in our battle lately)
+            receive(guest, newRenderer.ffuLastFrame);
+            const bool battle = !strncmp(guest.header.id + 3, "_battle", 7);
+            const bool laid = battle && guest.header.anchored && fresh(guest);
+            if (laid != guest.lastLaid)
+            {
+                ffnx_info("FFU layer: %s's battle layer %s our battle (%u frames laid in so far)\n", guest.game,
+                          laid ? "laid into" : "no longer in", guest.laidIn);
+                guest.lastLaid = laid;
+            }
+            if (laid) layGuest(guest);
+        }
+    }
+
     bgfx::ProgramHandle compositeProgram = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformGuest = BGFX_INVALID_HANDLE, uniformHost = BGFX_INVALID_HANDLE, uniformScale = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerColour = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
@@ -307,9 +391,7 @@ bool Renderer::ffuBattleLayerStart()
 {
     if (ffuBattleLayerFrame || ffuLayerActive || !battleWanted() || !ffuLayerBegin(false)) return false;   // (no touch: this draw is staged)
     ffuBattleLayerFrame = true;
-    strncpy(captured.id, "ff7_battle", sizeof(captured.id) - 1);
-    captured.unitsPerR = 1.0f;
-    captured.depthFormat = 0;
+    battleMeta(captured, ffuLayerWidth, ffuLayerHeight);
     return true;
 }
 
@@ -324,9 +406,10 @@ void Renderer::ffuBattleLayerFrameEnd()
     }
     else if (battleWanted() && !ffuLayerActive && ffuLayerBegin())
     {
-        strncpy(captured.id, "ff7_battle", sizeof(captured.id) - 1);
+        battleMeta(captured, ffuLayerWidth, ffuLayerHeight);
         ffuLayerEnd();
     }
+    ffuGuestLayersFrameEnd();
 }
 
 void Renderer::ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, uint32_t depthFormat)
@@ -338,6 +421,7 @@ void Renderer::ffuLayerCapture(void (*draw)(), const char *id, float unitsPerR, 
     strncpy(captured.id, id ? id : "", sizeof(captured.id) - 1);
     captured.unitsPerR = unitsPerR;
     captured.depthFormat = depthFormat;
+    captured.anchored = 0;
 }
 
 void Renderer::ffuLayerRender()
@@ -479,7 +563,7 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
     uint32_t covered = 0;
     for (int y = 0; y < ffuLayerReadHeight; y += 2)
         for (int x = 0; x < ffuLayerReadWidth; x += 2)
-            if (slot.colour[((size_t)y * ffuLayerReadWidth + x) * 4 + 3])
+            if (*(const uint32_t *)&slot.colour[((size_t)y * ffuLayerReadWidth + x) * 4])   // (alpha or colour: FF7's adds leave alpha 0)
             {
                 ++covered;
                 minX = std::min(minX, x); maxX = std::max(maxX, x);
@@ -508,6 +592,8 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
         header->nearDistance = header->farDistance = 0.0f;
         ::memcpy(header->id, meta.id, sizeof(header->id));
         header->covered = covered;
+        ::memcpy(header->anchors, meta.anchors, sizeof(header->anchors));
+        header->anchored = meta.anchored;
         ::memcpy(base + sizeof(LayerHeader), slot.colour.data(), pixels * 4);
         ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
@@ -639,4 +725,45 @@ void Renderer::ffuLayerComposite(const char *id, uint32_t hostDepthFormat, float
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LEQUAL);
     bgfx::submit(backendViewId, compositeProgram);
     ++guest->composited;
+}
+
+// Our bridge, each battle frame its seat's guest publishes effects (mixed parties): where that guest's two anchors fall in
+// our battle (x0, y0, x1, y1 in our own 2D units: our seat's place and our monsters' middle through our camera).
+extern "C" __declspec(dllexport) void ffu_guest_layer_place(const char *game, const float *host)
+{
+    if (!game || !host) return;
+    for (auto &guest : guests)
+        if (!strncmp(game, guest.game, 3) && strcmp(guest.game, ownGame()))
+        {
+            ::memcpy(guest.hostAnchors, host, sizeof(guest.hostAnchors));
+            guest.placedFrame = newRenderer.ffuLastFrame;
+        }
+}
+
+// From gl_draw_indexed_primitive, before each draw of a battle frame: true at the frame's first flat draw after its 3D
+// (FF7's 3D draws aren't screen-space; FF8's are, with a depth), when the guests' layers go in first.
+bool ffuGuestLayersDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
+{
+    if (guestLaid || getmode_cached()->driver_mode != MODE_BATTLE) return false;
+    bool flat = vertextype == TLVERTEX;
+    for (uint32_t i = 0; flat && i < vertexcount; i++)
+        if (vertices[i].color.w != 1.0f) flat = false;
+    if (!flat)
+    {
+        guestSeen3D = true;
+        return false;
+    }
+    return guestSeen3D;
+}
+
+void ffuGuestLayersCompose()
+{
+    layGuests();
+}
+
+// Each frame's end (Renderer::ffuBattleLayerFrameEnd): a frame with 3D and no flat draw after it has them added now.
+void ffuGuestLayersFrameEnd()
+{
+    if (!guestLaid && guestSeen3D && getmode_cached()->driver_mode == MODE_BATTLE) layGuests();
+    guestLaid = guestSeen3D = false;
 }
