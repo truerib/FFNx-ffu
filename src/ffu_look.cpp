@@ -26,6 +26,8 @@
 // battles, and nothing at all when FFNx's lighting wasn't on at start (it is set up only then).
 
 #include <atomic>
+#include <cstdlib>
+#include <cstring>
 
 #include "cfg.h"
 #include "common.h"
@@ -87,6 +89,14 @@ bool ffuLookAtmosphere()
 {
     int flags = requestedFlags.load();
     return flags < 0 || (flags & LOOK_ATMOSPHERE);
+}
+
+// Tests: FFU_LOOK_SPLIT=1 shows each part of the look (FF8's lighting and haze, FF7's haze and bars, the glow, FXAA) on
+// the picture's right half only, the game's own on the left: one frame, before and after (docs/battle-look.md).
+float ffuLookSplit()
+{
+    static const float split = [] { const char *value = getenv("FFU_LOOK_SPLIT"); return value && !strcmp(value, "1") ? 0.5f : 0.0f; }();
+    return split;
 }
 
 bool ffuLookCinema()

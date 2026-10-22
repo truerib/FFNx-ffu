@@ -27,6 +27,7 @@ SAMPLER2D(s_ff7Depth, 1);
 
 uniform vec4 u_ff7Depth;   // FF7's depth along the view axis: (z x + y) / (z z' + w), the rows FFNx drew its 3D with
 uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (0: none), z the bars' height (uv), w the mask
+uniform vec4 u_ff7Split;   // x: the test split (FFU_LOOK_SPLIT): FF7's own left of it
 
 float viewDepth(float d)
 {
@@ -39,6 +40,11 @@ void main()
 {
     vec2 uv = v_texcoord0;
     vec4 scene = texture2D(s_ff7Scene, uv);
+    if (uv.x < u_ff7Split.x)
+    {
+        gl_FragColor = u_ff7Split.x - uv.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;
+        return;
+    }
     vec3 shown = scene.rgb;
     float d = texture2D(s_ff7Depth, uv).x;
     if (u_ff7Haze.y > 0.0 && d < 0.9999 && d > 0.0001)

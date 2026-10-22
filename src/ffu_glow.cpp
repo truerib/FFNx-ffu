@@ -38,6 +38,7 @@
 bool ffuLookGlow();   // ffu_look.cpp
 bool ffuLookShown();
 float ffuLookLevel(int which);
+float ffuLookSplit();
 
 namespace
 {
@@ -106,7 +107,7 @@ namespace
             { -1.0f, 1.0f, 0.5f, 0.0f, 0.0f }, { 1.0f, -1.0f, 0.5f, 1.0f, 1.0f }, { -1.0f, -1.0f, 0.5f, 0.0f, 1.0f },
         };
         memcpy(vertices.data, corners, sizeof(corners));
-        const float passData[4] = { mode, stepU, stepV, 0.0f };
+        const float passData[4] = { mode, stepU, stepV, mode > 2.5f ? ffuLookSplit() : 0.0f };   // (FXAA: the test split)
         const float params[4] = { THRESHOLD, KNEE, SMALL * ffuLookLevel(3), WIDE * ffuLookLevel(3) };   // (Richard's slider)
         bgfx::setUniform(uniformPass, passData);
         bgfx::setUniform(uniformParams, params);
@@ -189,9 +190,29 @@ bool Renderer::ffuGlowWanted()
 }
 
 // The draw's state with its colour blend as FFNx set it and its alpha: added by additive draws, cleared under every
-// other draw (and kept under a subtractive one).
+// other draw (and kept under a subtractive one). A flat draw (the menus, the HUD: every rhw 1, gl.cpp) never adds:
+// FF8's HP list stands on a faint additive panel, which the glow made a blue box (Richard 2026-10-22, "boxes").
 uint64_t Renderer::ffuGlowState(uint64_t state)
 {
+    if (ffuGlowFlatDraw)
+    {
+        state &= ~(BGFX_STATE_BLEND_MASK | BGFX_STATE_BLEND_EQUATION_MASK);
+        uint64_t rgbSrc = BGFX_STATE_BLEND_ONE, rgbDst = BGFX_STATE_BLEND_ZERO;
+        uint64_t rgbEquation = BGFX_STATE_BLEND_EQUATION_ADD;
+        switch (internalState.blendMode)
+        {
+        case RendererBlendMode::BLEND_AVG: rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_INV_SRC_ALPHA; break;
+        case RendererBlendMode::BLEND_ADD: rgbDst = BGFX_STATE_BLEND_ONE; break;
+        case RendererBlendMode::BLEND_SUB: rgbDst = BGFX_STATE_BLEND_ONE; rgbEquation = BGFX_STATE_BLEND_EQUATION_REVSUB; break;
+        case RendererBlendMode::BLEND_25P: rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_ONE; break;
+        case RendererBlendMode::BLEND_NONE:
+            if (internalState.bIsExternalTexture && !ff8) { rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_INV_SRC_ALPHA; }
+            break;
+        default: break;
+        }
+        return state | BGFX_STATE_BLEND_FUNC_SEPARATE(rgbSrc, rgbDst, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ZERO)
+            | BGFX_STATE_BLEND_EQUATION_SEPARATE(rgbEquation, BGFX_STATE_BLEND_EQUATION_ADD);   // (alpha cleared: no glow there)
+    }
     uint64_t rgbSrc = BGFX_STATE_BLEND_ONE, rgbDst = BGFX_STATE_BLEND_ZERO, aSrc = BGFX_STATE_BLEND_ZERO, aDst = BGFX_STATE_BLEND_ZERO;
     uint64_t rgbEquation = BGFX_STATE_BLEND_EQUATION_ADD;
     switch (internalState.blendMode)
@@ -297,7 +318,7 @@ void Renderer::ffuGlowComposite(float x0, float x2, float gameWidth, float gameH
         { left, 1.0f, 0.5f, 0.0f, 0.0f }, { right, -1.0f, 0.5f, 1.0f, 1.0f }, { left, -1.0f, 0.5f, 0.0f, 1.0f },
     };
     memcpy(vertices.data, corners, sizeof(corners));
-    const float passData[4] = { 2.0f, 0.0f, 0.0f, 0.0f };
+    const float passData[4] = { 2.0f, 0.0f, 0.0f, ffuLookSplit() };   // (w: the test split, FFU_LOOK_SPLIT)
     const float params[4] = { THRESHOLD, KNEE, SMALL * ffuLookLevel(3), WIDE * ffuLookLevel(3) };   // (Richard's slider)
     bgfx::setUniform(uniformPass, passData);
     bgfx::setUniform(uniformParams, params);

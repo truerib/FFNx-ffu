@@ -44,6 +44,7 @@ bool ffuLookLighting();   // ffu_look.cpp
 bool ffuLookShown();
 bool ffuLookAtmosphere();
 float ffuLookLevel(int which);
+float ffuLookSplit();
 
 namespace
 {
@@ -260,7 +261,7 @@ void Renderer::ffuFF8Light()
     const float look[4] = { AMBIENT * ffuLookLevel(1), 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), std::min(CONTACT * ffuLookLevel(2), 1.0f) };
     const float stage = samples > 0 ? float(sumX / double(samples)) : 10000.0f;   // (the depth FF8's 3D stands at, on average)
     const float hazeMost = ffuLookAtmosphere() ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;
-    const float haze[4] = { HAZE_START * stage, 0.0f, hazeMost, 0.0f };
+    const float haze[4] = { HAZE_START * stage, ffuLookSplit(), hazeMost, 0.0f };   // (y: the test split, FFU_LOOK_SPLIT)
     bgfx::setUniform(uniformLens, lens);
     bgfx::setUniform(uniformCam, cam);
     bgfx::setUniform(uniformFrame, frame);

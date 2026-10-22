@@ -554,6 +554,7 @@ public:
     // Final Fantasy Universe: the glow's copy of the picture before the frame's first effect (ffu_glow.cpp)
     void ffuGlowPrepare();
     void ffuGlowBeforeEffect();
+    bool ffuGlowFlatDraw = false;   // this draw is flat (gl.cpp): never joins the glow's mask
     // Final Fantasy Universe: FF7's battle haze and cinematic bars (ffu_ff7look.cpp), before its first flat draw
     bool ffuFF7Ready();
     void ffuFF7Prepare();

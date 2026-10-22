@@ -35,7 +35,7 @@ uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one t
 uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0)
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
-uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none)
+uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
 
 vec3 viewAt(vec2 uv)
 {
@@ -88,6 +88,11 @@ void main()
 {
     vec2 uv = v_texcoord0;
     vec4 scene = texture2D(s_ff8Scene, uv);
+    if (uv.x < u_ff8Haze.y)
+    {
+        gl_FragColor = u_ff8Haze.y - uv.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;   // (the test split: FF8's own on the left)
+        return;
+    }
     float z = texture2D(s_ff8Depth, uv).x;
     float backdrop = backdropDepth();
     if (backdropAt(z, backdrop))

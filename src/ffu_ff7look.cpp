@@ -46,6 +46,7 @@ bool ffuLookAtmosphere();   // ffu_look.cpp
 bool ffuLookCinema();
 bool ffuLookShown();
 float ffuLookLevel(int which);
+float ffuLookSplit();
 
 namespace
 {
@@ -54,7 +55,7 @@ namespace
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE, uniformSplit = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
@@ -179,6 +180,7 @@ bool Renderer::ffuFF7Ready()
     program = bgfx::createProgram(getShader(vertex), getShader(fragment), true);
     uniformDepth = bgfx::createUniform("u_ff7Depth", bgfx::UniformType::Vec4);
     uniformHaze = bgfx::createUniform("u_ff7Haze", bgfx::UniformType::Vec4);
+    uniformSplit = bgfx::createUniform("u_ff7Split", bgfx::UniformType::Vec4);
     samplerScene = bgfx::createUniform("s_ff7Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff7Depth", bgfx::UniformType::Sampler);
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
@@ -251,6 +253,8 @@ void Renderer::ffuFF7Pass()
     bgfx::setViewTransform(backendViewId, nullptr, nullptr);
     bgfx::setUniform(uniformDepth, depthRows);
     bgfx::setUniform(uniformHaze, hazeData);
+    const float split[4] = { ffuLookSplit(), 0.0f, 0.0f, 0.0f };
+    bgfx::setUniform(uniformSplit, split);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::TransientVertexBuffer vertices;

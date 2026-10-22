@@ -76,10 +76,12 @@ void main()
     else if (u_ffuGlow.x < 2.5)
     {
         vec3 glow = texture2D(s_ffuGlowA, uv).rgb * u_ffuGlowParams.z + texture2D(s_ffuGlowB, uv).rgb * u_ffuGlowParams.w;
+        if (uv.x < u_ffuGlow.w) glow = vec3_splat(0.0);   // (the test split, FFU_LOOK_SPLIT: the game's own on the left)
         gl_FragColor = vec4(glow, 0.0);
     }
     else
     {
-        gl_FragColor = vec4(fxaa(uv, u_ffuGlow.yz), texture2D(s_ffuGlowA, uv).a);
+        vec4 own = texture2D(s_ffuGlowA, uv);
+        gl_FragColor = uv.x < u_ffuGlow.w ? own : vec4(fxaa(uv, u_ffuGlow.yz), own.a);   // (the test split)
     }
 }

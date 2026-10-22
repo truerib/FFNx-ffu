@@ -332,8 +332,12 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	void ffuSurveyDraw(uint32_t, const struct nvertex *, uint32_t, uint32_t, uint32_t, uint32_t);
 	ffuSurveyDraw(vertextype, vertices, vertexcount, current_state.blend_mode, current_state.depthtest, current_state.depthmask);
 	// Final Fantasy Universe: FF8's battle lighting before its first flat draw (ffu_ff8look.cpp)
-	// Final Fantasy Universe: the glow's copy of the picture before the frame's first effect (ffu_glow.cpp)
-	if (current_state.blend_mode == 1 || current_state.blend_mode == 3) newRenderer.ffuGlowBeforeEffect();
+	// Final Fantasy Universe: the glow's copy of the picture before the frame's first 3D effect, and whether this draw is
+	// flat (the menus, the HUD: every rhw 1), which never joins the glow (ffu_glow.cpp)
+	bool ffuFlat = vertextype == TLVERTEX;
+	for (uint32_t i = 0; ffuFlat && i < vertexcount; i++) if (vertices[i].color.w != 1.0f) ffuFlat = false;
+	newRenderer.ffuGlowFlatDraw = ffuFlat;
+	if (!ffuFlat && (current_state.blend_mode == 1 || current_state.blend_mode == 3)) newRenderer.ffuGlowBeforeEffect();
 	bool ffuFF8LookDraw(uint32_t, const struct nvertex *, uint32_t);
 	if (ffuFF8LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF8Light();
 	bool ffuFF7LookDraw(uint32_t, const struct nvertex *, uint32_t);   // FF7's haze and cinematic bars (ffu_ff7look.cpp)
