@@ -338,7 +338,10 @@ void Renderer::ffuFF8Light()
     if (internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame || backendViewId > 240
         || !ffuFF8Ready())
         return;
-    const float hazeMost = ffuLookAtmosphere() ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;
+    // (FF8's haze is held back: FF8 sets its far scenery's pieces at depth offsets of their own, so one piece of a mountain
+    // range hazed and the next didn't, a box (2026-10-22, build 85); ffuLookAtmosphere() and HAZE_MOST come back with a
+    // haze that reads those pieces alike)
+    const float hazeMost = 0.0f;
     if (!ffuLookLighting() && hazeMost <= 0.0f)
         return;   // (the haze alone at nothing: nothing to draw)
     if (bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6)
