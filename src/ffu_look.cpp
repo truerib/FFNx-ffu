@@ -20,7 +20,7 @@
 //
 // Lighting (FF7): FFNx's own lighting (enable_lighting) already lights FF7's battles and casts their shadows. The look
 // gives it the shared engine's balance, the same as FF9's battles (mods/ff9-globe BattleScene.cs): matte surfaces
-// (metallic 0, low specular, rough), the main light 2.6 times the ambient, about the overall brightness FFNx's installed
+// (metallic 0, low specular, rough), the main light 3.8 times the ambient, about the overall brightness FFNx's installed
 // config gives (its light 4.0 at metallic 0.5 and ambient 1.0: a surface half turned to the light keeps its colour).
 // Off: FFNx's installed config again (lighting/config.toml, its per-battle groups too). Nothing changes outside
 // battles, and nothing at all when FFNx's lighting wasn't on at start (it is set up only then).
@@ -124,8 +124,9 @@ void ffuFF7LookFrameEnd();
 
 namespace
 {
-    // (the main light 2.6 times the ambient: Richard 2026-10-22, "I can't see any other changes", at 1.7 times)
-    constexpr float METALLIC = 0.0f, SPECULAR = 0.1f, ROUGHNESS = 0.85f, LIGHT = 2.3f, AMBIENT = 0.9f;
+    // (the main light 3.8 times the ambient: Richard 2026-10-22, "I can't see any other changes", at 1.7 times; at 2.6 a
+    // pair of the same idle frame still differed by 2.6 of 255, the sides away from the light about as FFNx lit them)
+    constexpr float METALLIC = 0.0f, SPECULAR = 0.1f, ROUGHNESS = 0.85f, LIGHT = 2.5f, AMBIENT = 0.65f;
     std::atomic<bool> shown{true};   // the game's window is shown (a hidden battle, a mixed party's guest, gets no look)
 
     bool lookWanted()
@@ -228,6 +229,6 @@ void ffuLookAfterLighting()
     putAmbient = AMBIENT * levels[1].load();
     put(METALLIC, SPECULAR, ROUGHNESS, putLight, putAmbient);
     if (!tuned)
-        ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 2.6x the ambient)\n");
+        ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 3.8x the ambient)\n");
     tuned = true;
 }
