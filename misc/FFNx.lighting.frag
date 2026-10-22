@@ -309,4 +309,18 @@ void main()
     // return to sRGB gamma space so we can do alpha blending the same way FF7/8 did.
     gl_FragColor.rgb = toGamma(gl_FragColor.rgb);
 
+    // Final Fantasy Universe: while the battle look's glow keeps its mask in the frame's alpha (ffuFrameOpaque,
+    // src/ffu_glow.cpp), a draw that adds writes the light it adds as its alpha: added ONE ONE (1, ADD), or premultiplied
+    // and added ONE ONE (3, a quarter: the same colour as its SRC_ALPHA ONE), so the glow is what the effects added and a
+    // sprite's dark or clear texels glow nothing (Richard 2026-10-22: "boxes around every effect")
+    if (ffuFrameOpaque)
+    {
+        if (abs(VSFlags.y - 1.0) < 0.01) gl_FragColor.a = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
+        else if (abs(VSFlags.y - 3.0) < 0.01)
+        {
+            gl_FragColor.rgb *= gl_FragColor.a;
+            gl_FragColor.a = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
+        }
+    }
+
 }
