@@ -49,6 +49,7 @@ bool ffuLookAtmosphere();
 bool ffuLookSpell();
 bool ffuLookRim();
 bool ffuLookShaking();
+bool ffuLookGrade();
 void ffuLookShake(float shake[4]);
 bool ffuLookSoftShadows();
 float ffuLookDebug();
@@ -102,7 +103,9 @@ namespace
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformLight = BGFX_INVALID_HANDLE, uniformLook = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerLight = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE, uniformFloor = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformShake = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformShake = BGFX_INVALID_HANDLE, uniformGrade = BGFX_INVALID_HANDLE;
+    // The colour grade (Richard's next list, item 4): its strength at the slider's 1 (the maths: FFNx.ffugrade.sh)
+    constexpr float GRADE = 1.0f;
     // The spells' light (Richard's next list, item 1; as FF7's: ffu_ff7look.cpp): the effects' light from the glow's
     // mask (the last frame's, blurred about a tenth of the picture wide by ffu_glow.cpp), multiplied in
     constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
@@ -259,7 +262,7 @@ static DepthLines depthLines()
 // the frame's first flat draw after some 3D, when the lighting pass goes first.
 bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount, uint32_t depthWritten)
 {
-    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell() || ffuLookRim() || ffuLookShaking())
+    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell() || ffuLookRim() || ffuLookShaking() || ffuLookGrade())
         || !ffuLookShown())
         return false;
     bool flat = true;
@@ -313,7 +316,7 @@ void ffuFF8LookFrame()
         lastStageAge = KEPT_FRAMES;   // (the next battle's stage is its own)
         lastLines = DepthLines();
     }
-    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell() || ffuLookRim() || ffuLookShaking()) && ffuLookShown())
+    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell() || ffuLookRim() || ffuLookShaking() || ffuLookGrade()) && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
     samples = 0;
@@ -345,6 +348,7 @@ bool Renderer::ffuFF8Ready()
     uniformRim = bgfx::createUniform("u_ff8Rim", bgfx::UniformType::Vec4);
     uniformFloor = bgfx::createUniform("u_ff8Floor", bgfx::UniformType::Vec4);
     uniformShake = bgfx::createUniform("u_ff8Shake", bgfx::UniformType::Vec4);
+    uniformGrade = bgfx::createUniform("u_ff8Grade", bgfx::UniformType::Vec4);
     samplerLight = bgfx::createUniform("s_ff8Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff8Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff8Depth", bgfx::UniformType::Sampler);
@@ -417,7 +421,8 @@ void Renderer::ffuFF8Light()
     const bgfx::TextureHandle effectsLight = ffuGlowLight();
     const float spell = ffuLookSpell() && bgfx::isValid(effectsLight) ? SPELL * ffuLookLevel(5) : 0.0f;
     const float rim = ffuLookRim() ? RIM : 0.0f;   // (the soft shadows ride on the lighting: u_ff8Rim.w)
-    if (!ffuLookLighting() && hazeMost <= 0.0f && spell <= 0.0f && rim <= 0.0f && ffuLookDebug() <= 0.0f && !ffuLookShaking())
+    const float grade = ffuLookGrade() ? GRADE * ffuLookLevel(7) : 0.0f;
+    if (!ffuLookLighting() && hazeMost <= 0.0f && spell <= 0.0f && rim <= 0.0f && ffuLookDebug() <= 0.0f && !ffuLookShaking() && grade <= 0.0f)
         return;   // (the haze alone at nothing: nothing to draw)
     if (bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6)
         return;
@@ -474,6 +479,8 @@ void Renderer::ffuFF8Light()
     float shake[4];
     ffuLookShake(shake);   // (the impact's: ffu_look.cpp)
     bgfx::setUniform(uniformShake, shake);
+    const float gradeData[4] = { grade, 0.0f, 0.0f, 0.0f };
+    bgfx::setUniform(uniformGrade, gradeData);
     // The floor (FF8's battle world's height 0, its battles' floor: the diagnostic's vertices) in the view: for a view ray
     // d, view depth = floor.w / dot(floor.xyz, d), floor.xyz the world's down as the view sees it and w its dot with the
     // camera's translation (view = matrix x world + translation, LookAt 0x50CB40); none when the matrix reads as nothing

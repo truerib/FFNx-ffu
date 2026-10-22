@@ -51,6 +51,7 @@ bool ffuLookShaking();
 void ffuLookShake(float shake[4]);
 bool ffuLookDof();
 bool ffuLookMotion();
+bool ffuLookGrade();
 bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 bool ffuLookShown();
 float ffuLookLevel(int which);
@@ -75,13 +76,15 @@ namespace
     // camera jumped further than CUT (clip units at what it looks at) is a cut, never blurred
     // (at the cinematics' slider's 1; 0.007 and 0.01 blurred a near character by 30 pixels at 4K: FF9's first pair)
     constexpr float DOF_APERTURE = 0.005f, DOF_MOST = 0.008f, MOTION_SHARE = 1.0f, MOTION_MOST = 0.04f, CUT = 0.3f;
+    // The colour grade (Richard's next list, item 4): its strength at the slider's 1 (the shader's maths: FFNx.ffugrade.sh)
+    constexpr float GRADE = 1.0f;
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE, uniformSplit = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformContact = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformShake = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformShake = BGFX_INVALID_HANDLE, uniformGrade = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE, samplerLight = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
@@ -248,6 +251,7 @@ bool Renderer::ffuFF7Ready()
     uniformSpell = bgfx::createUniform("u_ff7Spell", bgfx::UniformType::Vec4);
     uniformRim = bgfx::createUniform("u_ff7Rim", bgfx::UniformType::Vec4);
     uniformShake = bgfx::createUniform("u_ff7Shake", bgfx::UniformType::Vec4);
+    uniformGrade = bgfx::createUniform("u_ff7Grade", bgfx::UniformType::Vec4);
     samplerLight = bgfx::createUniform("s_ff7Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff7Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff7Depth", bgfx::UniformType::Sampler);
@@ -366,7 +370,7 @@ void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking() && !ffuLookDof() && !ffuLookMotion()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking() && !ffuLookDof() && !ffuLookMotion() && !ffuLookGrade()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 230 || !ffuFF7Ready())   // (up to 9 views of its own, below the glow's 241 on)
         return;
     ffuFF7Prepare();
@@ -403,7 +407,8 @@ void Renderer::ffuFF7Pass()
     const float cineLevel = ffuLookLevel(6);   // (Richard's slider)
     const float dof = ffuLookDof() && cineAt > 0.0f ? DOF_APERTURE * cineAt * cineLevel : 0.0f;
     const bool motion = ffuLookMotion() && cineAt > 0.0f && moved && ffuLookLevel(6) > 0.0f;
-    const bool look = haze || barsAt > 0.0f || contact > 0.0f || spell > 0.0f || rim > 0.0f || shaking;
+    const float grade = ffuLookGrade() ? GRADE * ffuLookLevel(7) : 0.0f;
+    const bool look = haze || barsAt > 0.0f || contact > 0.0f || spell > 0.0f || rim > 0.0f || shaking || grade > 0.0f;
     if (!look && dof <= 0.0f && !motion)
         return;
     const float aspect = float(framebufferWidth) / float(std::max<uint16_t>(framebufferHeight, 1));
@@ -456,6 +461,8 @@ void Renderer::ffuFF7Pass()
         const float rimData[4] = { rim, RIM_REACH, RIM_REACH * aspect, 0.0f };   // (round on the screen)
         bgfx::setUniform(uniformRim, rimData);
         bgfx::setUniform(uniformShake, shake);
+        const float gradeData[4] = { grade, 0.0f, 0.0f, 0.0f };
+        bgfx::setUniform(uniformGrade, gradeData);
         // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
         bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);

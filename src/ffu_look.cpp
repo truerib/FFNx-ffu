@@ -49,8 +49,11 @@ namespace
     constexpr int LOOK_IMPACT = 512;
     // (item 3's cinematics: depth of field and motion blur while a summon or Limit plays, off unless told)
     constexpr int LOOK_DOF = 1024, LOOK_MOTION = 2048;
+    // (item 4: the colour grade, off unless told)
+    constexpr int LOOK_GRADE = 4096;
     std::atomic<float> spellLevel{1.0f};   // its slider (ffu_look_spell)
     std::atomic<float> cinematicLevel{1.0f};   // the cinematics' slider (ffu_look_cinematic)
+    std::atomic<float> gradeLevel{1.0f};       // the colour grade's slider (ffu_look_grade)
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
     std::atomic<float> levels[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
@@ -106,6 +109,18 @@ extern "C" __declspec(dllexport) void ffu_look_spell(float level)
 extern "C" __declspec(dllexport) void ffu_look_cinematic(float level)
 {
     cinematicLevel.store(level >= 0.0f && level <= 2.0f ? level : 1.0f);
+}
+
+// The colour grade's slider (the bridges' look.c, from the hub's "grade_amount"): a multiple of the grade as built, 0-2.
+extern "C" __declspec(dllexport) void ffu_look_grade(float level)
+{
+    gradeLevel.store(level >= 0.0f && level <= 2.0f ? level : 1.0f);
+}
+
+bool ffuLookGrade()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_GRADE);
 }
 
 bool ffuLookSpell()
@@ -248,6 +263,7 @@ float ffuLookLevel(int which)
 {
     if (which == 5) return spellLevel.load();
     if (which == 6) return cinematicLevel.load();
+    if (which == 7) return gradeLevel.load();
     return which >= 0 && which < 5 ? levels[which].load() : 1.0f;
 }
 

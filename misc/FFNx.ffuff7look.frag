@@ -35,6 +35,18 @@ uniform vec4 u_ff7Shake;   // the impact's shake: xy the picture's offset (uv), 
 uniform vec4 u_ff7Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv)
 uniform vec4 u_ff7Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its ring's radius (uv across); zw one texel (uv)
+uniform vec4 u_ff7Grade;   // the colour grade: x its strength (0: off)
+
+#include "FFNx.ffugrade.sh"
+
+// The picture's middle grey for the grade: the mean brightness of 16 places on a grid (the same texels for every pixel)
+float gradeMiddle()
+{
+    float sum = 0.0;
+    for (int k = 0; k < 16; k++)
+        sum += dot(texture2D(s_ff7Scene, vec2((float(k - (k / 4) * 4) + 0.5) / 4.0, (float(k / 4) + 0.5) / 4.0)).rgb, vec3(0.299, 0.587, 0.114));
+    return sum / 16.0;
+}
 
 float viewDepth(float d)
 {
@@ -188,6 +200,7 @@ void main()
             shown = mix(shown, sky.rgb / sky.w, haze);
         }
     }
+    if (u_ff7Grade.x > 0.0) shown = ffuGrade(shown, u_ff7Grade.x, gradeMiddle());   // (the whole 3D picture, before FF7's menus)
     shown *= step(u_ff7Haze.z, v_texcoord0.y) * step(v_texcoord0.y, 1.0 - u_ff7Haze.z);   // (the bars: black, never shaken)
     gl_FragColor = vec4(shown, scene.a);
 }
