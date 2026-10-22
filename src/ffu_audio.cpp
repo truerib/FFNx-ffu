@@ -152,7 +152,14 @@ void NxAudioEngine::ffuPlayFiles()
             delete stream;
             continue;
         }
-        _ffuPlaying.push_back({stream, _engine.play(*stream, request.volume * getSFXMasterVolume(), request.pan)});
+        SoLoud::handle handle = _engine.play(*stream, request.volume * getSFXMasterVolume(), request.pan);
+        _engine.setLooping(handle, false);   // (once, as its game started it: a file's loop tags never make it endless here)
+        _ffuPlaying.push_back({stream, handle});
+        if (_ffuPlaying.size() > 32) {   // (never more than 32 at once: the oldest stopped)
+            _engine.stop(_ffuPlaying.front().second);
+            delete _ffuPlaying.front().first;
+            _ffuPlaying.erase(_ffuPlaying.begin());
+        }
     }
     for (size_t k = 0; k < _ffuPlaying.size();) {
         if (_engine.isValidVoiceHandle(_ffuPlaying[k].second)) { k++; continue; }

@@ -1185,7 +1185,7 @@ bool NxAudioEngine::playVoice(const char* name, int slot, float volume, int game
 
 		_currentVoice[slot].handle = _engine.play(*_currentVoice[slot].stream, _currentVoice[slot].volume);
 
-		ffuNote(filename, (NxAudioEngineLayer)-1, volume, 0.0f);   // (FFU: a visitor's own voice, its file already resolved)
+		ffuNote(filename, (NxAudioEngineLayer)-1, getVoiceMasterVolume() > 0.0f ? _currentVoice[slot].volume / getVoiceMasterVolume() : 0.0f, 0.0f);   // (FFU: a visitor's own voice, its file already resolved; its own volume, the master's left out)
 
 		return _engine.isValidVoiceHandle(_currentVoice[slot].handle);
 	}
