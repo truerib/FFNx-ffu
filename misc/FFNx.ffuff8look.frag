@@ -28,6 +28,7 @@ $input v_texcoord0
 
 SAMPLER2D(s_ff8Scene, 0);
 SAMPLER2D(s_ff8Depth, 1);
+SAMPLER2D(s_ff8Light, 2);   // the light FF8's effects added, blurred at a quarter (the glow's, the last frame's)
 
 uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = offset + scale * (of + H * X / Z))
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
@@ -36,6 +37,7 @@ uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y
 uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame); x also FF8's slope within each triangle
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
+uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its disc's radius (uv)
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
 
 // The view depth of FF8's depth z: on its stage's line where the stage's depths lie (FF8 pushes the stage back behind
@@ -94,6 +96,19 @@ vec4 skyColour(float backdrop)
         if (backdropAt(texture2D(s_ff8Depth, at).x, backdrop)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
     }
     return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
+}
+
+// The spells' light round this pixel (as FF7's pass: FFNx.ffuff7look.frag): the effects' blurred light over a disc.
+vec3 spellLight(vec2 uv)
+{
+    vec3 sum = texture2D(s_ff8Light, uv).rgb;
+    for (int ring = 1; ring <= 3; ring++)
+        for (int k = 0; k < 8; k++)
+        {
+            float a = (float(k) + 0.33 * float(ring)) * 0.785398;
+            sum += texture2D(s_ff8Light, uv + vec2(cos(a), sin(a)) * u_ff8Spell.yz * (float(ring) / 3.0)).rgb;
+        }
+    return sum / 25.0;
 }
 
 vec2 uvAt(vec3 p)
@@ -173,6 +188,11 @@ void main()
         float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
         shaded = scene.rgb * pow(max(vec3_splat(mix(1.0, light, onStage)), vec3_splat(1e-4)), vec3_splat(0.4545));
     }
+    float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
+    // The spells' light: what stands round an effect takes its light, as a factor on its own colour (the battle and its
+    // ground: faded out beyond them as the lighting is)
+    if (u_ff8Spell.x > 0.0)
+        shaded += shaded * spellLight(uv) * u_ff8Spell.x * (1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z));
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {
@@ -181,6 +201,5 @@ void main()
         if (sky.w >= 2.0 && backdrop > u_ff8Haze.x)
             shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
     }
-    float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
     gl_FragColor = vec4(mix(shaded, scene.rgb, effect), scene.a);
 }

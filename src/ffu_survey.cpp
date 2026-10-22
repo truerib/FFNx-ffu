@@ -40,7 +40,14 @@ namespace
         uint32_t depthBlend[8] = {}, flatBlend[8] = {};
         uint32_t depthTested = 0, depthWritten = 0, flatTested = 0, flatWritten = 0;
         float zMin = 1e9f, zMax = -1e9f, rhwMin = 1e9f, rhwMax = -1e9f;
+        // the flat draws in order (their blend modes), and the adding ones' depth and place on the screen (FF8's spells
+        // reach FFNx flat, as its HUD: what tells them apart, for the glow's mask and the spells' light)
+        char flatOrder[40] = {};
+        int flatOrderLength = 0;
+        float addZMin = 1e9f, addZMax = -1e9f, addYMin = 1e9f, addYMax = -1e9f;
+        int addFirst = -1;   // (the first adding flat draw's place among the flat ones)
     } frame;
+    uint32_t lastSpellLine = 0;
     uint32_t frames = 0;
 }
 
@@ -74,6 +81,18 @@ void ffuSurveyDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t
         }
     if (flat)
     {
+        if (frame.flatOrderLength < 39) frame.flatOrder[frame.flatOrderLength++] = char('0' + blend);
+        if (blend == 1 || blend == 3)
+        {
+            if (frame.addFirst < 0) frame.addFirst = (int)frame.flatDraws;
+            for (uint32_t i = 0; i < vertexcount; i++)
+            {
+                frame.addZMin = std::min(frame.addZMin, vertices[i]._.z);
+                frame.addZMax = std::max(frame.addZMax, vertices[i]._.z);
+                frame.addYMin = std::min(frame.addYMin, vertices[i]._.y);
+                frame.addYMax = std::max(frame.addYMax, vertices[i]._.y);
+            }
+        }
         frame.flatDraws++;
         frame.flatBlend[blend]++;
         if (frame.firstFlat < 0) frame.firstFlat = index;
@@ -101,6 +120,14 @@ void ffuSurveyFrame()
 {
     if (surveyOn != 1 || frame.draws == 0)
         return;
+    // (a frame with more adding flat draws than the HUD's one panel: a spell, at most one line every 15 frames)
+    if (frame.flatBlend[1] + frame.flatBlend[3] >= 2 && frames - lastSpellLine >= 15)
+    {
+        lastSpellLine = frames;
+        ffnx_info("FFU survey, adding flat draws: %u (blends 1 %u, 3 %u), first at flat #%d of %u; their z %.5f..%.5f, y %.0f..%.0f; "
+                  "flat order %s\n", frame.flatBlend[1] + frame.flatBlend[3], frame.flatBlend[1], frame.flatBlend[3], frame.addFirst,
+                  frame.flatDraws, frame.addZMin, frame.addZMax, frame.addYMin, frame.addYMax, frame.flatOrder);
+    }
     if (++frames % 120 == 0)
         ffnx_info("FFU survey: %u draws: %u with depth (blends 0-4: %u %u %u %u %u; tested %u, written %u; z %.5f..%.5f, rhw %.6f..%.6f), "
                   "%u flat (blends %u %u %u %u %u; tested %u, written %u), %u untransformed (tested %u, written %u; last #%d, %d after the first flat); "

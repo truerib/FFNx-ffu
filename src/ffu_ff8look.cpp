@@ -46,6 +46,8 @@
 bool ffuLookLighting();   // ffu_look.cpp
 bool ffuLookShown();
 bool ffuLookAtmosphere();
+bool ffuLookSpell();
+bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 float ffuLookLevel(int which);
 float ffuLookSplit();
 
@@ -92,7 +94,11 @@ namespace
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformLens = BGFX_INVALID_HANDLE, uniformCam = BGFX_INVALID_HANDLE, uniformFrame = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformLight = BGFX_INVALID_HANDLE, uniformLook = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle samplerLight = BGFX_INVALID_HANDLE;
+    // The spells' light (Richard's next list, item 1; as FF7's: ffu_ff7look.cpp): the effects' light from the glow's
+    // mask (the last frame's, blurred at a quarter) over a disc about a tenth of the picture across, multiplied in
+    constexpr float SPELL = 3.0f, SPELL_DISC = 0.08f;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;
@@ -204,7 +210,7 @@ static DepthLines depthLines()
 // the frame's first flat draw after some 3D, when the lighting pass goes first.
 bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount, uint32_t depthWritten)
 {
-    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere())
+    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell())
         || !ffuLookShown())
         return false;
     bool flat = true;
@@ -246,7 +252,7 @@ void ffuFF8LookFrame()
         lastStageAge = KEPT_FRAMES;   // (the next battle's stage is its own)
         lastLines = DepthLines();
     }
-    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere()) && ffuLookShown())
+    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere() || ffuLookSpell()) && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
     samples = 0;
@@ -274,6 +280,8 @@ bool Renderer::ffuFF8Ready()
     uniformLook = bgfx::createUniform("u_ff8Look", bgfx::UniformType::Vec4);
     uniformHaze = bgfx::createUniform("u_ff8Haze", bgfx::UniformType::Vec4);
     uniformStage = bgfx::createUniform("u_ff8Stage", bgfx::UniformType::Vec4);
+    uniformSpell = bgfx::createUniform("u_ff8Spell", bgfx::UniformType::Vec4);
+    samplerLight = bgfx::createUniform("s_ff8Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff8Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff8Depth", bgfx::UniformType::Sampler);
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
@@ -342,7 +350,9 @@ void Renderer::ffuFF8Light()
     // range hazed and the next didn't, a box (2026-10-22, build 85); ffuLookAtmosphere() and HAZE_MOST come back with a
     // haze that reads those pieces alike)
     const float hazeMost = 0.0f;
-    if (!ffuLookLighting() && hazeMost <= 0.0f)
+    const bgfx::TextureHandle effectsLight = ffuGlowLight();
+    const float spell = ffuLookSpell() && bgfx::isValid(effectsLight) ? SPELL * ffuLookLevel(5) : 0.0f;
+    if (!ffuLookLighting() && hazeMost <= 0.0f && spell <= 0.0f)
         return;   // (the haze alone at nothing: nothing to draw)
     if (bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6)
         return;
@@ -390,6 +400,10 @@ void Renderer::ffuFF8Light()
     bgfx::setUniform(uniformStage, stage);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
+    const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * float(width) / float(std::max<uint16_t>(height, 1)), 0.0f };
+    bgfx::setUniform(uniformSpell, spellData);
+    // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
+    bgfx::setTexture(2, samplerLight, spell > 0.0f ? effectsLight : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     bgfx::TransientVertexBuffer vertices;
     bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);
     const QuadVertex corners[6] = {

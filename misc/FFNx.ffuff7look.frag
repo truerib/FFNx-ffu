@@ -26,10 +26,12 @@ $input v_texcoord0
 
 SAMPLER2D(s_ff7Scene, 0);
 SAMPLER2D(s_ff7Depth, 1);
+SAMPLER2D(s_ff7Light, 2);   // the light FF7's effects added, blurred at a quarter (the glow's, the last frame's)
 
 uniform vec4 u_ff7Depth;   // FF7's depth along the view axis: (z x + y) / (z z' + w), the rows FFNx drew its 3D with
 uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (0: none), z the bars' height (uv), w the mask
 uniform vec4 u_ff7Split;   // x: the test split (FFU_LOOK_SPLIT): FF7's own left of it
+uniform vec4 u_ff7Spell;   // the spells' light: x its strength (0: off), yz its disc's radius (uv)
 uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its ring's radius (uv across); zw one texel (uv)
 
 float viewDepth(float d)
@@ -73,6 +75,21 @@ float contactAt(vec2 uv, float here)
     return 1.0 - u_ff7Contact.x * occlusion / 8.0;
 }
 
+// The spells' light round this pixel: the effects' blurred light over a disc (the centre and three rings of eight,
+// each ring turned a little from the last so no pattern shows), so a spell lights what stands about a tenth of the
+// picture round it.
+vec3 spellLight(vec2 uv)
+{
+    vec3 sum = texture2D(s_ff7Light, uv).rgb;
+    for (int ring = 1; ring <= 3; ring++)
+        for (int k = 0; k < 8; k++)
+        {
+            float a = (float(k) + 0.33 * float(ring)) * 0.785398;
+            sum += texture2D(s_ff7Light, uv + vec2(cos(a), sin(a)) * u_ff7Spell.yz * (float(ring) / 3.0)).rgb;
+        }
+    return sum / 25.0;
+}
+
 void main()
 {
     vec2 uv = v_texcoord0;
@@ -92,6 +109,14 @@ void main()
         float here = nearness(uv);
         float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
         if (onStage > 0.0) shown *= mix(1.0, contactAt(uv, here), onStage * (1.0 - effect));
+    }
+    if (u_ff7Spell.x > 0.0 && d < 0.9999 && d > 0.0001)
+    {
+        // (what stands round an effect takes its light, as a factor on its own colour; the effect's own pixels and FF7's
+        // far scenery as they are)
+        float here = nearness(uv);
+        float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
+        shown += shown * spellLight(uv) * u_ff7Spell.x * onStage * (1.0 - effect);
     }
     if (u_ff7Haze.y > 0.0 && d < 0.9999 && d > 0.0001)
     {

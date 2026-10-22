@@ -38,6 +38,7 @@
 #include "utils.h"
 
 bool ffuLookGlow();   // ffu_look.cpp
+bool ffuLookSpell();
 bool ffuLookShown();
 float ffuLookLevel(int which);
 float ffuLookSplit();
@@ -61,6 +62,7 @@ namespace
     uint16_t sharpWidth = 0, sharpHeight = 0;
     uint16_t halfWidth = 0, halfHeight = 0;
     bool built = false;   // this frame's glow is in halves[0] and quarters[0]
+    bool lightBuilt = false;   // the last frame's light the effects added is in quarters[0] (ffuGlowLight)
 
     struct QuadVertex { float x, y, z, u, v; };
 
@@ -145,7 +147,8 @@ bool Renderer::ffuGlowReady()
 // This draw goes into FFNx's frame while a battle is shown (Renderer::draw, its backend frame buffer branch).
 bool Renderer::ffuGlowWanted()
 {
-    return ffuLookGlow() && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
+    // (the mask and its blur serve the glow and the spells' light, each with its own switch)
+    return (ffuLookGlow() || ffuLookSpell()) && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
         && !ffuLayerActive && !ffuBattleLayerFrame && programState >= 0;
 }
 
@@ -240,6 +243,7 @@ bgfx::TextureHandle Renderer::ffuSharpen(bgfx::TextureHandle frame, uint16_t fra
 void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight)
 {
     built = false;
+    lightBuilt = false;
     const bool drawn = ffuGlowFrame;
     ffuGlowFrame = false;
     if (!drawn || !ffuGlowWanted() || !ffuGlowReady())
@@ -254,7 +258,16 @@ void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint
         && pass(view++, quarters[0], qw, qh, 1.0f, 0.0f, 0.0f, bgfx::getTexture(halves[0]), none)   // (a plain copy down)
         && pass(view++, quarters[1], qw, qh, 1.0f, 2.0f / qw, 0.0f, bgfx::getTexture(quarters[0]), none)
         && pass(view++, quarters[0], qw, qh, 1.0f, 0.0f, 2.0f / qh, bgfx::getTexture(quarters[1]), none);
-    built = ok;
+    built = ok && ffuLookGlow();
+    lightBuilt = ok;
+}
+
+// The light the effects added, blurred at a quarter of the frame's size, as the last frame left it (bgfx runs the glow's
+// views after all of FFNx's, so a pass between FFNx's draws reads it before this frame's glow overwrites it): the
+// spells' light's source for FF7's and FF8's passes (ffu_ff7look.cpp, ffu_ff8look.cpp). Invalid when it wasn't built.
+bgfx::TextureHandle ffuGlowLight()
+{
+    return lightBuilt && bgfx::isValid(quarters[0]) ? bgfx::getTexture(quarters[0]) : bgfx::TextureHandle BGFX_INVALID_HANDLE;
 }
 
 // After the post-processing pass: the glow added onto the picture where the frame was drawn (x0..x2 in the post
