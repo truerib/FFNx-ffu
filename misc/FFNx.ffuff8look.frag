@@ -35,7 +35,7 @@ uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one t
 uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0)
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
-uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), y 1 / its range, z its most (0: none)
+uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), y 1 / its range, z its most (0: none), w the backdrop's depth
 
 vec3 viewAt(vec2 uv)
 {
@@ -47,14 +47,20 @@ vec3 viewAt(vec2 uv)
     return vec3(xz * Z, yz * Z, Z);
 }
 
-// The sky's colour: the picture where FF8's 3D drew nothing near its top (8 places); w how many were sky (outdoors).
+// FF8's backdrop (its sky dome, far 3D) or nothing drawn at all.
+bool backdropAt(float z)
+{
+    return z >= 0.9999 || z <= 0.0001 || (z - u_ff8Depth.y) / u_ff8Depth.x >= u_ff8Haze.w;
+}
+
+// The sky's colour: the backdrop near the picture's top (8 places); w how many were the backdrop (outdoors).
 vec4 skyColour()
 {
     vec4 sum = vec4_splat(0.0);
     for (int k = 0; k < 8; k++)
     {
         vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
-        if (texture2D(s_ff8Depth, at).x >= 0.9999) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
+        if (backdropAt(texture2D(s_ff8Depth, at).x)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
     }
     return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
 }
@@ -71,9 +77,9 @@ void main()
     vec2 uv = v_texcoord0;
     vec4 scene = texture2D(s_ff8Scene, uv);
     float z = texture2D(s_ff8Depth, uv).x;
-    if (z >= 0.9999 || z <= 0.0001)
+    if (backdropAt(z))
     {
-        gl_FragColor = scene;   // nothing of FF8's 3D here (cleared depth)
+        gl_FragColor = scene;   // FF8's sky or nothing of its 3D: as FF8 drew it
         return;
     }
     vec2 t = u_ff8Frame.zw;
