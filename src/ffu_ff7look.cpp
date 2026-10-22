@@ -79,24 +79,17 @@ namespace
         const byte last = ff7_externals.battle_context ? ff7_externals.battle_context->lastCommandIdx : 0;
         const uint16_t e100 = *ff7_externals.effect100_counter, e60 = ff7_externals.effect60_counter ? *ff7_externals.effect60_counter : 0,
             e10 = ff7_externals.effect10_counter ? *ff7_externals.effect10_counter : 0;
-        const bool effects = e100 > 0 || e60 > 0 || e10 > 0;
-        // What FF7 says, each time it changes (the bars' test, checked live: docs/battle-look.md)
-        static uint32_t told = UINT32_MAX;
-        const uint32_t now = uint32_t(command) | (uint32_t(last) << 8) | (effects ? 1u << 16 : 0u);
-        if (now != told)
-        {
-            told = now;
-            ffnx_info("FFU FF7 bars: event command 0x%02X, last command 0x%02X, effects %u %u %u\n", command, last, e100, e60, e10);
-        }
+        const bool effects = e100 > 0 || e60 > 0 || e10 > 0;   // (checked live: Barret's Big Shot is 0x14 with effects 0 5 0, then 1 2 0)
         return effects && (cinematicCommand(command) || cinematicCommand(last));
     }
 
-    // The bars' weight this frame, eased: in over 0.45 s, held 0.5 s after the cinematic, out over 0.6 s.
+    // The bars' weight this frame, eased: in over 0.45 s, held 1 s after the cinematic (a Limit's effects pause about 0.9 s
+    // between its parts), out over 0.6 s.
     float barsWeight()
     {
-        const ULONGLONG now = GetTickCount64();
-        const float dt = lastTick ? std::min(float(now - lastTick) / 1000.0f, 0.1f) : 0.0f;
-        lastTick = now;
+        const ULONGLONG nowTick = GetTickCount64();
+        const float dt = lastTick ? std::min(float(nowTick - lastTick) / 1000.0f, 0.1f) : 0.0f;
+        lastTick = nowTick;
         const bool playing = ffuLookCinema() && cinematicPlaying();
         static bool wasPlaying = false;
         if (playing != wasPlaying && ff7_externals.anim_event_queue.data() && ff7_externals.effect100_counter)
@@ -104,7 +97,7 @@ namespace
                       ff7_externals.anim_event_queue[0].commandIndex, *ff7_externals.effect100_counter,
                       ff7_externals.effect60_counter ? *ff7_externals.effect60_counter : 0, ff7_externals.effect10_counter ? *ff7_externals.effect10_counter : 0);
         wasPlaying = playing;
-        barsHold = playing ? 0.5f : std::max(barsHold - dt, 0.0f);
+        barsHold = playing ? 1.0f : std::max(barsHold - dt, 0.0f);
         const bool wanted = playing || barsHold > 0.0f;
         bars = wanted ? std::min(bars + dt / 0.45f, 1.0f) : std::max(bars - dt / 0.6f, 0.0f);
         return bars * bars * (3.0f - 2.0f * bars);
