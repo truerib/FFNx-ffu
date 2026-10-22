@@ -92,7 +92,7 @@ namespace
 // fit; true at the frame's first flat draw after some 3D, when the lighting pass goes first.
 bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
-    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookLighting()
+    if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere())
         || !ffuLookShown())
         return false;
     bool flat = true;
@@ -126,7 +126,7 @@ void ffuFF8LookFrame()
 {
     if (ff8 && getmode_cached()->driver_mode != MODE_BATTLE)
         newRenderer.ffuFF8Prepare();
-    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookLighting() && ffuLookShown())
+    if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere()) && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
     sumX = sumY = sumXX = sumXY = 0.0;
@@ -252,7 +252,7 @@ void Renderer::ffuFF8Light()
     const float gameWidth = widescreen_enabled ? float(*ff8_externals.ssigpu_viewport_width_dword_B7CBF8) : float(game_width);
     const float cam[4] = { lensH, float(*(const int16_t *)GTE_OFX), float(*(const int16_t *)GTE_OFY), left };
     const float frame[4] = { gameWidth, float(game_height), 1.0f / width, 1.0f / height };
-    const float depthFit[4] = { a, b, ffuGlowWanted() ? 1.0f : 0.0f, 0.0f };
+    const float depthFit[4] = { a, b, ffuGlowWanted() ? 1.0f : 0.0f, ffuLookLighting() ? 1.0f : 0.0f };   // (w: the lighting itself; the pass also runs for the haze alone)
     float toLight[3], up[3];
     const bool fromWorld = towardLight(toLight, up);
     // Richard's sliders scale the light, the light from all around and the contact shading; the exposure stays, so a

@@ -32,7 +32,7 @@ SAMPLER2D(s_ff8Depth, 1);
 uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = offset + scale * (of + H * X / Z))
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
 uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
-uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0)
+uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
@@ -145,7 +145,7 @@ void main()
     float contact = 1.0 - u_ff8Look.w * occlusion / 8.0;
 
     float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
-    vec3 shaded = scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545));
+    vec3 shaded = u_ff8Depth.w > 0.5 ? scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545)) : scene.rgb;   // (the haze alone: FF8's own colour)
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {
