@@ -62,7 +62,9 @@ float contactAt(vec2 uv, float here)
     {
         float a = float(k) * 0.785398;
         vec2 o = vec2(cos(a), sin(a)) * ring * (mod(float(k), 2.0) < 0.5 ? 1.0 : 0.55);
-        float there = nearness(uv + o);
+        vec2 at = uv + o;
+        if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;   // (off the picture: nothing known there)
+        float there = nearness(at);
         if (there <= 0.0) continue;
         float plane = here + gx * o.x / texel.x + gy * o.y / texel.y;
         float ahead = (there - plane) / here;   // (in front of the plane: nearer)

@@ -219,8 +219,7 @@ void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    const float contact = ffuLookLighting() ? std::min(CONTACT * ffuLookLevel(2), 1.0f) : 0.0f;
-    if ((!haze && barsAt <= 0.0f && contact <= 0.0f) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    if ((!haze && barsAt <= 0.0f && !ffuLookLighting()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 240 || !ffuFF7Ready())
         return;
     ffuFF7Prepare();
@@ -246,6 +245,9 @@ void Renderer::ffuFF7Pass()
         const float dz = float(ff7_externals.g_battle_camera_position->z - ff7_externals.g_battle_camera_focal_point->z);
         stage = sqrtf(dx * dx + dy * dy + dz * dz);
     }
+    const float contact = ffuLookLighting() && stage > 1.0f ? std::min(CONTACT * ffuLookLevel(2), 1.0f) : 0.0f;   // (its fade needs the stage's size)
+    if (!haze && barsAt <= 0.0f && contact <= 0.0f)
+        return;
     const float aspect = float(framebufferWidth) / float(std::max<uint16_t>(framebufferHeight, 1));
     const float barHeight = std::max(0.0f, (1.0f - aspect / CINEMA_ASPECT) * 0.5f) * barsAt;
     const float hazeMost = haze && stage > 1.0f ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;

@@ -60,7 +60,14 @@ namespace
     // 0xB7CEE0, one offset for all of it; the characters z = 8.754e-6 Z + 0.0029 (within each triangle 3.05e-6: FF8 steps
     // them by its ordering table's slot, too finely to matter); z 0.04-0.18 against 0.38 and up.
     constexpr uint32_t STAGE_SLOPE = 0xB7CEE0;
+    constexpr float MEASURED_SLOPE = 3.0517578e-06f, CHARACTERS_SLOPE = 8.754e-06f, CHARACTERS_OFFSET = 0.0029f;
     constexpr uint32_t MOST_SAMPLES = 8192;
+    // The stage's offset is looked for among offsets (z less the stage's slope's share) from 0.15 in bands 0.003 wide: the
+    // fullest band holding 16 samples or more across 2,000 units of view depth or more (a floor: far characters, or a
+    // few far pieces at an offset of their own, span far less; review). A stage found stays for 120 frames without one.
+    constexpr int BANDS = 240;
+    constexpr float BANDS_FROM = 0.15f, BAND = 0.003f, FLOOR_SPAN = 2000.0f;
+    constexpr uint32_t BAND_LEAST = 16, KEPT_FRAMES = 120;
     // The look's balance (as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact. The exposure
     // keeps the floor in the light as FF8 drew it (a wrapped diffuse of FLOOR_DIFFUSE: the floor faces the battle world's
     // up, the main light 49 degrees above it); in shadow, or turned away, about 35% darker; turned to the light about 6%
@@ -97,65 +104,95 @@ namespace
     struct Sample { float view, z; };
     Sample sampled[MOST_SAMPLES];
     uint32_t samples = 0;
+    uint32_t sampleSeed = 1;   // (once full, each sample takes a place at random: every draw keeps its share)
     // FF8's two lines of depth this frame (depthLines)
     struct DepthLines
     {
-        float slope = 1.5235901e-05f, offset = 0.0015f;   // (its characters'; FF8's own numbers until fitted)
-        float stageSlope = 0.0f, stageOffset = 0.0f, stageFrom = 2.0f;   // (its stage's, from that depth up; none: 2)
+        float slope = CHARACTERS_SLOPE, offset = CHARACTERS_OFFSET;   // (its characters'; as measured until fitted)
+        float stageSlope = MEASURED_SLOPE, stageOffset = 0.0f, stageFrom = 2.0f;   // (its stage's, from that depth up; none: 2)
         uint32_t stage = 0, rest = 0;
-        float restMost = -1.0f, standsAt = 10000.0f;
+        float standsAt = 10000.0f;
+        bool kept = false;   // (this frame's stage is an earlier frame's)
     };
+    DepthLines lastLines;
+    uint32_t lastStageAge = KEPT_FRAMES;
 
     struct QuadVertex { float x, y, z, u, v; };
 }
 
-// FF8's two lines of depth this frame, from its own vertices: the stage is the vertices whose z less the stage's slope
-// (FF8's, at STAGE_SLOPE) is the highest, within 0.003 of it (one offset), the rest (characters, effects drawn with depth)
-// fitted on a line of their own. The stage is told apart only when its depths all lie beyond the rest's; else one line.
+// FF8's two lines of depth this frame, from its own vertices: the stage is the fullest band of offsets (z less the stage's
+// slope, FF8's at STAGE_SLOPE, times the view depth) that spans a floor's depths; the rest (characters, effects drawn with
+// depth), below it, fitted on a line of their own. A frame without either keeps the last (120 frames) or the measured.
 static DepthLines depthLines()
 {
     DepthLines lines;
     if (samples == 0)
         return lines;
-    const float slope = *(const float *)STAGE_SLOPE;
-    const bool stageSlope = slope > 1e-8f && slope < 1e-4f;
-    float highest = -1e9f;
+    float slope = *(const float *)STAGE_SLOPE;
+    if (!(slope > 1e-6f && slope < 1e-5f)) slope = MEASURED_SLOPE;
+    lines.stageSlope = slope;
+    uint32_t count[BANDS] = {};
+    float nearest[BANDS], farthest[BANDS];
+    for (int band = 0; band < BANDS; band++) { nearest[band] = 1e30f; farthest[band] = -1.0f; }
     double viewSum = 0.0;
     for (uint32_t i = 0; i < samples; i++)
     {
-        if (stageSlope) highest = std::max(highest, sampled[i].z - slope * sampled[i].view);
         viewSum += sampled[i].view;
+        const int band = int(floorf((sampled[i].z - slope * sampled[i].view - BANDS_FROM) / BAND));
+        if (band < 0 || band >= BANDS) continue;
+        count[band]++;
+        nearest[band] = std::min(nearest[band], sampled[i].view);
+        farthest[band] = std::max(farthest[band], sampled[i].view);
     }
     lines.standsAt = float(viewSum / samples);
-    double offsetSum = 0.0, sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
+    int best = -1;
+    for (int band = 0; band < BANDS; band++)
+        if (count[band] >= BAND_LEAST && farthest[band] - nearest[band] >= FLOOR_SPAN && (best < 0 || count[band] > count[best]))
+            best = band;
+    float stageLowest = 2.0f;
+    double offsetSum = 0.0;
+    if (best >= 0)
+    {
+        const float centre = BANDS_FROM + (float(best) + 0.5f) * BAND;
+        for (uint32_t i = 0; i < samples; i++)
+        {
+            const float c = sampled[i].z - slope * sampled[i].view;
+            if (fabsf(c - centre) > 1.5f * BAND) continue;
+            offsetSum += c;
+            lines.stage++;
+            stageLowest = std::min(stageLowest, sampled[i].z);
+        }
+        lines.stageOffset = float(offsetSum / std::max<uint32_t>(lines.stage, 1));
+        lines.stageFrom = stageLowest - 0.0005f;
+    }
+    double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
     for (uint32_t i = 0; i < samples; i++)
     {
         const float x = sampled[i].view, y = sampled[i].z;
-        if (stageSlope && y - slope * x > highest - 0.003f)
-        {
-            offsetSum += y - slope * x;
-            lines.stage++;
-            continue;
-        }
+        if (best >= 0 && y - slope * x > lines.stageOffset - 2.0f * BAND) continue;   // (the stage, and what FF8 pushes back further)
         sx += x; sy += y; sxx += double(x) * x; sxy += double(x) * y;
         lines.rest++;
-        lines.restMost = std::max(lines.restMost, y);
     }
     const double n = double(lines.rest), det = n * sxx - sx * sx;
-    if (lines.rest >= 16 && det > 1e-9)
+    bool fitted = false;
+    if (lines.rest >= 16 && det > 1e-3 * n * n)
     {
         const float fitSlope = float((n * sxy - sx * sy) / det), fitOffset = float((sy - fitSlope * sx) / n);
-        if (fitSlope > 1e-7f) { lines.slope = fitSlope; lines.offset = fitOffset; }
+        if (fitSlope > 2e-6f && fitSlope < 5e-5f) { lines.slope = fitSlope; lines.offset = fitOffset; fitted = true; }
     }
-    if (lines.stage >= 8)
+    if (best >= 0)
     {
-        const float offset = float(offsetSum / lines.stage);
-        if (lines.rest == 0 || lines.restMost < offset - 0.002f)
-        {
-            lines.stageSlope = slope;
-            lines.stageOffset = offset;
-            lines.stageFrom = offset - 0.001f;   // (a stage depth is its offset or more)
-        }
+        if (!fitted) { lines.slope = lastLines.slope; lines.offset = lastLines.offset; }
+        lastLines = lines;
+        lastStageAge = 0;
+    }
+    else if (lastStageAge < KEPT_FRAMES)
+    {
+        lastStageAge++;
+        lines.stageOffset = lastLines.stageOffset;
+        lines.stageFrom = lastLines.stageFrom;
+        lines.kept = true;
+        if (!fitted) { lines.slope = lastLines.slope; lines.offset = lastLines.offset; }
     }
     return lines;
 }
@@ -177,11 +214,17 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
         }
     if (!flat)
     {
-        for (uint32_t i = 0; depthWritten && i < vertexcount && samples < MOST_SAMPLES; i += 4)
+        for (uint32_t i = 0; depthWritten && i < vertexcount; i += 4)
         {
             const float rhw = vertices[i].color.w, z = vertices[i]._.z;
             if (!(rhw > 0.0f && rhw < 0.5f) || !(z > 0.0f && z < 1.0f)) continue;   // (FFNx maps an infinite rhw to 1)
-            sampled[samples++] = { 1.0f / rhw, z };
+            if (samples < MOST_SAMPLES)
+                sampled[samples++] = { 1.0f / rhw, z };
+            else
+            {
+                sampleSeed = sampleSeed * 1664525u + 1013904223u;
+                sampled[(sampleSeed >> 8) % MOST_SAMPLES] = { 1.0f / rhw, z };
+            }
         }
         return false;
     }
@@ -196,7 +239,11 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
 void ffuFF8LookFrame()
 {
     if (ff8 && getmode_cached()->driver_mode != MODE_BATTLE)
+    {
         newRenderer.ffuFF8Prepare();
+        lastStageAge = KEPT_FRAMES;   // (the next battle's stage is its own)
+        lastLines = DepthLines();
+    }
     if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere()) && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
@@ -304,7 +351,7 @@ void Renderer::ffuFF8Light()
         return;
 
     const DepthLines lines = depthLines();
-    const float stage[4] = { lines.stageSlope, lines.stageOffset, lines.stageFrom, lines.stageFrom < 1.5f ? 1.0f : 0.0f };
+    const float stage[4] = { lines.stageSlope, lines.stageOffset, lines.stageFrom, lines.stageFrom < 1.5f ? 1.0f : 0.0f };   // (x also the slope within each triangle)
 
     // 1: the picture so far drawn lit into the pass's own target (FFNx's colour and FF8's depth read). Each of the
     // pass's views draws in order, as FFNx's own view 1 (bgfx's default mode sorts: the HUD after it would be sorted)
@@ -363,9 +410,9 @@ void Renderer::ffuFF8Light()
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::touch(backendViewId);
     if (passes++ % 600 == 0)
-        ffnx_info("FFU FF8 lighting: pass %u (depth: the stage %s%.4g x + %.4f from %u samples, the rest %.4g x + %.4f from %u, up to z %.4f; "
+        ffnx_info("FFU FF8 lighting: pass %u (depth: the stage %s%.4g x + %.4f from %u samples, from z %.4f; the rest %.4g x + %.4f from %u; "
                   "lens H %.0f, scale %.3f x %.3f; view %u; light %s %.2f %.2f %.2f, the world's up in view %.2f %.2f %.2f)\n", passes,
-                  stage[3] > 0.5f ? "" : "(not told apart) ", lines.stageSlope, lines.stageOffset, lines.stage, lines.slope, lines.offset,
-                  lines.rest, lines.restMost, lensH, scaleX, scaleY, backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view",
+                  stage[3] < 0.5f ? "(not told apart) " : lines.kept ? "(kept) " : "", lines.stageSlope, lines.stageOffset, lines.stage,
+                  lines.stageFrom, lines.slope, lines.offset, lines.rest, lensH, scaleX, scaleY, backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view",
                   toLight[0], toLight[1], toLight[2], up[0], up[1], up[2]);
 }

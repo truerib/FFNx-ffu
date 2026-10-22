@@ -33,7 +33,7 @@ uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = off
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
 uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
 uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
-uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame)
+uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame); x also FF8's slope within each triangle
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
@@ -45,14 +45,25 @@ float viewDepth(float z)
     return u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z ? (z - u_ff8Stage.y) / u_ff8Stage.x : (z - u_ff8Depth.y) / u_ff8Depth.x;
 }
 
-vec3 viewAt(vec2 uv)
+vec3 viewFrom(vec2 uv, float Z)
 {
-    float z = texture2D(s_ff8Depth, uv).x;
-    float Z = viewDepth(z);
     vec2 s = uv * u_ff8Frame.xy + vec2(u_ff8Cam.w, 0.0);
     float xz = ((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x;
     float yz = ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x;
     return vec3(xz * Z, yz * Z, Z);
+}
+
+vec3 viewAt(vec2 uv)
+{
+    return viewFrom(uv, viewDepth(texture2D(s_ff8Depth, uv).x));
+}
+
+// A neighbour of a pixel at depth zc (view depth Zc): on the same triangle (its depth a little apart), by FF8's slope
+// within a triangle (its characters' line holds across them only: review), else on its own line.
+vec3 viewNear(vec2 uv, float zc, float Zc)
+{
+    float z = texture2D(s_ff8Depth, uv).x;
+    return viewFrom(uv, abs(z - zc) < 2e-4 && u_ff8Stage.x > 0.0 ? Zc + (z - zc) / u_ff8Stage.x : viewDepth(z));
 }
 
 // FF8's backdrop (its sky dome, far 3D), from the picture's top: the farthest of 8 places there, and what stands within
@@ -113,8 +124,9 @@ void main()
     vec3 shaded = scene.rgb;   // (the haze alone: FF8's own colour)
     if (u_ff8Depth.w > 0.5)
     {
-        vec3 px = viewAt(uv + vec2(t.x, 0.0)), nx = viewAt(uv - vec2(t.x, 0.0));
-        vec3 py = viewAt(uv + vec2(0.0, t.y)), ny = viewAt(uv - vec2(0.0, t.y));
+        // (two texels across: one step of FF8's stage depth is 10-20 units of view depth, a floor's pixel about as much)
+        vec3 px = viewNear(uv + vec2(2.0 * t.x, 0.0), z, p.z), nx = viewNear(uv - vec2(2.0 * t.x, 0.0), z, p.z);
+        vec3 py = viewNear(uv + vec2(0.0, 2.0 * t.y), z, p.z), ny = viewNear(uv - vec2(0.0, 2.0 * t.y), z, p.z);
         vec3 dx = abs(px.z - p.z) < abs(p.z - nx.z) ? px - p : p - nx;
         vec3 dy = abs(py.z - p.z) < abs(p.z - ny.z) ? py - p : p - ny;
         vec3 n = normalize(cross(dx, dy));
