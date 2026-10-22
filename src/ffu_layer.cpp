@@ -109,7 +109,8 @@ namespace
     // read once outside a battle, never published, so a battle's load never pays their first touch (Rule 89).
     bool warming = false;
     int warmedSlots = 0;
-    bool slotWarm[3] = {};
+    bool slotWarm[3] = {};      // this read is a warm-up's (never published)
+    bool slotWarmed[3] = {};    // this slot has been made and read once (each slot once: review)
 
 
     // FFNx.ffu7.sh GameDepthAt on the CPU: the shader's mul(mul(viewport, projection), v) on FF7's row-major
@@ -173,11 +174,6 @@ namespace
         return ask && ask->on && getmode_cached()->driver_mode == MODE_BATTLE;
     }
 
-    bool warmWanted()
-    {
-        const BattleAsk *ask = battleAsk();
-        return ask && ask->version >= 4 && ask->warm && warmedSlots < 3 && getmode_cached()->driver_mode != MODE_BATTLE;
-    }
 
     bool layerWanted()
     {
@@ -192,6 +188,14 @@ namespace
             if (crop && sscanf(crop, "%ux%u", &w, &h) == 2 && w >= 64 && h >= 64 && w <= MAX_CROP_WIDTH && h <= MAX_CROP_HEIGHT) { cropWidth = (uint16_t)w; cropHeight = (uint16_t)h; }
         }
         return wanted == 1;
+    }
+
+    // (never while the world layer is wanted: its scale differs, so each warm-up would make the targets again: review)
+    bool warmWanted()
+    {
+        const BattleAsk *ask = battleAsk();
+        return ask && ask->version >= 4 && ask->warm && warmedSlots < 3 && !layerWanted()
+            && getmode_cached()->driver_mode != MODE_BATTLE;
     }
 
     // The shared file, mapped once at the size of the first layer (enough for a full-size one).
@@ -427,8 +431,9 @@ void Renderer::ffuBattleLayerFrameEnd()
         battleMeta(captured, ffuLayerWidth, ffuLayerHeight);
         ffuLayerEnd();
     }
-    else if (!ffuLayerActive && warmWanted())   // one slot a frame, outside a battle
-    {
+    else if (!ffuLayerActive && warmWanted()
+             && [&] { for (int k = 0; k < 3; ++k) if (!ffuLayerSlots[k].pending && !slotWarmed[k]) return true; return false; }())
+    {   // one slot a frame, outside a battle, each slot once
         warming = true;
         if (ffuLayerBegin())
         {
@@ -536,7 +541,8 @@ void Renderer::ffuLayerEnd()
     ffuLayerViews[1] = backendViewId;
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
     FfuLayerSlot *slot = nullptr;
-    for (auto &candidate : ffuLayerSlots) if (candidate.pending == 0) { slot = &candidate; break; }
+    for (auto &candidate : ffuLayerSlots)
+        if (candidate.pending == 0 && (!warming || !slotWarmed[&candidate - ffuLayerSlots])) { slot = &candidate; break; }
     if (!slot) { ++skipped; return; }   // three already in flight
     // The crop: centred on the airship as last seen (until then a little below the middle, where the chase
     // camera puts it), inside the target.
@@ -559,7 +565,11 @@ void Renderer::ffuLayerEnd()
     slot->depths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
     slotMeta[slot - ffuLayerSlots] = captured;
     slotWarm[slot - ffuLayerSlots] = warming;
-    if (warming) ++warmedSlots;
+    if (warming && !slotWarmed[slot - ffuLayerSlots])
+    {
+        slotWarmed[slot - ffuLayerSlots] = true;
+        ++warmedSlots;
+    }
 }
 
 void Renderer::ffuLayerPoll()
