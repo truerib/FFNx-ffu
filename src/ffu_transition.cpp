@@ -130,20 +130,20 @@ void ffuTransitionFrame()
         disarm("no battle held in time");
         return;
     }
-    const int mode = getmode_cached()->driver_mode;
-    if (mode == MODE_SWIRL && !swirlCut)
+    const int driverMode = getmode_cached()->driver_mode;
+    if (driverMode == MODE_SWIRL && !swirlCut)
     {
         swirlCut = true;
         int *counter = (int *)SWIRL_COUNTER;
         ffnx_info("FFU transition: its own swirl ended at its frame %d\n", *counter);
         if (*counter < SWIRL_PAST_END) *counter = SWIRL_PAST_END;
     }
-    else if (mode == MODE_BATTLE && !battleSeen)
+    else if (driverMode == MODE_BATTLE && !battleSeen)
     {
         battleSeen = true;
         battleFrom = GetTickCount();
     }
-    else if (mode != MODE_SWIRL && mode != MODE_BATTLE && battleSeen)
+    else if (driverMode != MODE_SWIRL && driverMode != MODE_BATTLE && battleSeen)
         disarm("the battle ended before it was held");
 }
 
@@ -156,8 +156,8 @@ bool ffuTransitionLimit()
         disarm("its window shown before the hold");
         return false;
     }
-    const int mode = getmode_cached()->driver_mode;
-    if (mode == MODE_BATTLE)
+    const int driverMode = getmode_cached()->driver_mode;   // (not `mode`: this transition's own)
+    if (driverMode == MODE_BATTLE)
     {
         const uint32_t step = *(volatile uint32_t *)BATTLE_STEP;
         if (step > 2)
@@ -190,7 +190,7 @@ bool ffuTransitionLimit()
             return false;
         }
     }
-    else if (mode != MODE_SWIRL)
+    else if (driverMode != MODE_SWIRL)
         return false;   // (the world map's last frames before its swirl: paced as ever)
     unpaced++;
     return true;
