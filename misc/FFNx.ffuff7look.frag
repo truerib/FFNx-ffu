@@ -52,13 +52,20 @@ float nearness(vec2 uv)
 // Contact shading: 8 places on a ring (two radii) against the plane through this pixel (in nearness, from its nearer
 // neighbours on each axis); those standing in front of it by 0.4-15% of its depth shade it (nearer than that: another
 // thing in front, a silhouette, never a shadow on this one).
-float contactAt(vec2 uv, float here)
+// The plane through this pixel, in nearness per texel along x and y (from its nearer neighbours on each axis)
+vec2 nearSlope(vec2 uv, float here)
 {
     vec2 texel = u_ff7Contact.zw;
     float px = nearness(uv + vec2(texel.x, 0.0)), nx = nearness(uv - vec2(texel.x, 0.0));
     float py = nearness(uv + vec2(0.0, texel.y)), ny = nearness(uv - vec2(0.0, texel.y));
-    float gx = abs(px - here) < abs(here - nx) ? px - here : here - nx;
-    float gy = abs(py - here) < abs(here - ny) ? py - here : here - ny;
+    return vec2(abs(px - here) < abs(here - nx) ? px - here : here - nx, abs(py - here) < abs(here - ny) ? py - here : here - ny);
+}
+
+float contactAt(vec2 uv, float here)
+{
+    vec2 texel = u_ff7Contact.zw;
+    vec2 g = nearSlope(uv, here);
+    float gx = g.x, gy = g.y;
     vec2 ring = vec2(u_ff7Contact.y, u_ff7Contact.y * texel.y / texel.x);   // (round on the screen)
     float occlusion = 0.0;
     for (int k = 0; k < 8; k++)
@@ -92,14 +99,20 @@ vec3 spellLight(vec2 uv)
 // (a character's feet on the floor), 1 at a character against the far ground or the sky (nothing drawn: farthest).
 float rimAt(vec2 uv, float here)
 {
+    // (against the plane through this pixel: ground receding into the distance is no edge, only what stands in front of
+    // what lies behind it)
+    vec2 g = nearSlope(uv, here);
+    vec2 texel = u_ff7Contact.zw;
     float rim = 0.0;
     for (int ring = 1; ring <= 2; ring++)
         for (int k = 0; k < 8; k++)
         {
             float a = float(k) * 0.785398 + 0.39 * float(ring);
-            vec2 at = uv + vec2(cos(a), sin(a)) * u_ff7Rim.yz * (float(ring) * 0.5);
+            vec2 o = vec2(cos(a), sin(a)) * u_ff7Rim.yz * (float(ring) * 0.5);
+            vec2 at = uv + o;
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
-            float farther = (here - nearness(at)) / here;   // (0: as near; 1: nothing there)
+            float plane = here + g.x * o.x / texel.x + g.y * o.y / texel.y;
+            float farther = (plane - nearness(at)) / here;   // (0: on the plane; 1: nothing there)
             rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5));
         }
     return rim;

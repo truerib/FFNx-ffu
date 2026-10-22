@@ -72,6 +72,7 @@ namespace
     constexpr int BANDS = 240;
     constexpr float BANDS_FROM = 0.15f, BAND = 0.003f, FLOOR_SPAN = 2000.0f;
     constexpr uint32_t BAND_LEAST = 16, KEPT_FRAMES = 120;
+    constexpr float PUSHED = 0.25f;   // (the characters' offsets reach about 0.22 at 40,000 units; the stage's start near 0.3)
     // The look's balance (as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact. The exposure
     // keeps the floor in the light as FF8 drew it (a wrapped diffuse of FLOOR_DIFFUSE: the floor faces the battle world's
     // up, the main light 49 degrees above it); in shadow, or turned away, about 35% darker; turned to the light about 6%
@@ -97,7 +98,7 @@ namespace
     bgfx::UniformHandle uniformLens = BGFX_INVALID_HANDLE, uniformCam = BGFX_INVALID_HANDLE, uniformFrame = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformLight = BGFX_INVALID_HANDLE, uniformLook = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle samplerLight = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle samplerLight = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE, uniformFloor = BGFX_INVALID_HANDLE;
     // The spells' light (Richard's next list, item 1; as FF7's: ffu_ff7look.cpp): the effects' light from the glow's
     // mask (the last frame's, blurred about a tenth of the picture wide by ffu_glow.cpp), multiplied in
     constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
@@ -120,8 +121,8 @@ namespace
     {
         float slope = CHARACTERS_SLOPE, offset = CHARACTERS_OFFSET;   // (its characters'; as measured until fitted)
         float stageSlope = MEASURED_SLOPE, stageOffset = 0.0f, stageFrom = 2.0f;   // (its stage's, from that depth up; none: 2)
-        uint32_t stage = 0, rest = 0;
-        float standsAt = 10000.0f;
+        uint32_t stage = 0, rest = 0, pushed = 0;
+        float standsAt = 10000.0f, pushedLowest = 2.0f, restMost = -1.0f;
         bool kept = false;   // (this frame's stage is an earlier frame's)
     };
     DepthLines lastLines;
@@ -159,7 +160,6 @@ static DepthLines depthLines()
     for (int band = 0; band < BANDS; band++)
         if (count[band] >= BAND_LEAST && farthest[band] - nearest[band] >= FLOOR_SPAN && (best < 0 || count[band] > count[best]))
             best = band;
-    float stageLowest = 2.0f;
     double offsetSum = 0.0;
     if (best >= 0)
     {
@@ -170,20 +170,28 @@ static DepthLines depthLines()
             if (fabsf(c - centre) > 1.5f * BAND) continue;
             offsetSum += c;
             lines.stage++;
-            stageLowest = std::min(stageLowest, sampled[i].z);
         }
         lines.stageOffset = float(offsetSum / std::max<uint32_t>(lines.stage, 1));
-        // (from its offset up: its nearest pixels lie below its lowest sampled vertex, and read on the characters' line they
-        // stood beyond the sky; the characters' line stays below 0.33 to 40,000 units)
-        lines.stageFrom = std::min(stageLowest, lines.stageOffset) + 0.0003f;
     }
+    // What FF8 pushes back (its stage, in pieces at offsets of their own: the floor under the party is not the one before
+    // the camera, FFU_LOOK_DEBUG=1, 2026-10-22) is everything whose offset passes PUSHED; the shader reads all of it off
+    // the floor plane (or as the backdrop where its ray never meets the floor), the rest (characters, effects drawn
+    // with depth) on their own fitted line
+    float pushedLowest = 2.0f, restMost = -1.0f;
+    uint32_t pushed = 0;
     double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
     for (uint32_t i = 0; i < samples; i++)
     {
         const float x = sampled[i].view, y = sampled[i].z;
-        if (best >= 0 && y - slope * x > lines.stageOffset - 2.0f * BAND) continue;   // (the stage, and what FF8 pushes back further)
+        if (y - slope * x > PUSHED)
+        {
+            pushed++;
+            pushedLowest = std::min(pushedLowest, y);
+            continue;
+        }
         sx += x; sy += y; sxx += double(x) * x; sxy += double(x) * y;
         lines.rest++;
+        restMost = std::max(restMost, y);
     }
     const double n = double(lines.rest), det = n * sxx - sx * sx;
     bool fitted = false;
@@ -192,8 +200,14 @@ static DepthLines depthLines()
         const float fitSlope = float((n * sxy - sx * sy) / det), fitOffset = float((sy - fitSlope * sx) / n);
         if (fitSlope > 2e-6f && fitSlope < 5e-5f) { lines.slope = fitSlope; lines.offset = fitOffset; fitted = true; }
     }
-    if (best >= 0)
+    lines.pushed = pushed;
+    lines.pushedLowest = pushedLowest;
+    lines.restMost = restMost;
+    const bool found = pushed >= BAND_LEAST && pushedLowest > restMost + 0.002f;
+    if (found)
     {
+        lines.stageFrom = pushedLowest - 0.0005f;   // (a pushed-back depth is its lowest sample's or more)
+        if (best < 0) lines.stageOffset = lastLines.stageOffset;
         if (!fitted) { lines.slope = lastLines.slope; lines.offset = lastLines.offset; }
         lastLines = lines;
         lastStageAge = 0;
@@ -286,6 +300,7 @@ bool Renderer::ffuFF8Ready()
     uniformStage = bgfx::createUniform("u_ff8Stage", bgfx::UniformType::Vec4);
     uniformSpell = bgfx::createUniform("u_ff8Spell", bgfx::UniformType::Vec4);
     uniformRim = bgfx::createUniform("u_ff8Rim", bgfx::UniformType::Vec4);
+    uniformFloor = bgfx::createUniform("u_ff8Floor", bgfx::UniformType::Vec4);
     samplerLight = bgfx::createUniform("s_ff8Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff8Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff8Depth", bgfx::UniformType::Sampler);
@@ -410,6 +425,19 @@ void Renderer::ffuFF8Light()
     bgfx::setUniform(uniformSpell, spellData);
     const float rimData[4] = { rim, RIM_REACH, RIM_REACH * float(width) / float(std::max<uint16_t>(height, 1)), 0.0f };
     bgfx::setUniform(uniformRim, rimData);
+    // The floor (FF8's battle world's height 0, its battles' floor: the diagnostic's vertices) in the view: for a view ray
+    // d, view depth = floor.w / dot(floor.xyz, d), floor.xyz the world's down as the view sees it and w its dot with the
+    // camera's translation (view = matrix x world + translation, LookAt 0x50CB40); none when the matrix reads as nothing
+    float floorData[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    if (fromWorld)
+    {
+        const int16_t *matrix = (const int16_t *)BATTLE_VIEW_MATRIX;
+        const int32_t *translation = (const int32_t *)(BATTLE_VIEW_MATRIX + 0x14);
+        for (int row = 0; row < 3; row++) floorData[row] = matrix[row * 3 + 1] / 4096.0f;
+        floorData[3] = floorData[0] * float(translation[0]) + floorData[1] * float(translation[1]) + floorData[2] * float(translation[2]);
+        if (!(floorData[3] > 1.0f)) floorData[0] = floorData[1] = floorData[2] = floorData[3] = 0.0f;   // (the camera under the floor: none)
+    }
+    bgfx::setUniform(uniformFloor, floorData);
     // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
     bgfx::setTexture(2, samplerLight, spell > 0.0f ? effectsLight : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     bgfx::TransientVertexBuffer vertices;
@@ -437,8 +465,10 @@ void Renderer::ffuFF8Light()
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::touch(backendViewId);
     if (passes++ % 600 == 0)
-        ffnx_info("FFU FF8 lighting: pass %u (depth: the stage %s%.4g x + %.4f from %u samples, from z %.4f; the rest %.4g x + %.4f from %u; "
+        ffnx_info("FFU FF8 lighting: pass %u (depth: pushed back %u samples from z %.4f, the rest to z %.4f; floor %.3f %.3f %.3f %.0f; "
+                  "the stage %s%.4g x + %.4f from %u samples, from z %.4f; the rest %.4g x + %.4f from %u; "
                   "lens H %.0f, scale %.3f x %.3f; view %u; light %s %.2f %.2f %.2f, the world's up in view %.2f %.2f %.2f)\n", passes,
+                  lines.pushed, lines.pushedLowest, lines.restMost, floorData[0], floorData[1], floorData[2], floorData[3],
                   stage[3] < 0.5f ? "(not told apart) " : lines.kept ? "(kept) " : "", lines.stageSlope, lines.stageOffset, lines.stage,
                   lines.stageFrom, lines.slope, lines.offset, lines.rest, lensH, scaleX, scaleY, backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view",
                   toLight[0], toLight[1], toLight[2], up[0], up[1], up[2]);

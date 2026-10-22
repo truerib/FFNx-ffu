@@ -40,33 +40,54 @@ uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact
 uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT); w the test view (FFU_LOOK_DEBUG: 1 what each pixel is taken for, 2 its shadow)
 uniform vec4 u_ff8Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv)
+uniform vec4 u_ff8Floor;   // FF8's battle floor: view depth = w / dot(xyz, the view ray); w 0: not read this frame
 
-// The view depth of FF8's depth z: on its stage's line where the stage's depths lie (FF8 pushes the stage back behind
-// everything: ffu_ff8look.cpp), on its characters' line elsewhere.
-float viewDepth(float z)
+// The view ray through this pixel (x and y per unit of view depth), by FF8's lens
+vec2 rayAt(vec2 uv)
 {
-    return u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z ? (z - u_ff8Stage.y) / u_ff8Stage.x : (z - u_ff8Depth.y) / u_ff8Depth.x;
+    vec2 s = uv * u_ff8Frame.xy + vec2(u_ff8Cam.w, 0.0);
+    return vec2(((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x, ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x);
+}
+
+// What FF8 pushed back (its stage, in pieces at depth offsets of their own: ffu_ff8look.cpp)
+bool pushedBack(float z)
+{
+    return u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z;
+}
+
+// The view depth here: what FF8 pushed back read off its battle floor (the floor plane through this pixel's ray; where
+// the ray never meets it, the backdrop: 1e7), the rest on its characters' line.
+float viewDepthAt(vec2 uv, float z)
+{
+    if (!pushedBack(z))
+        return (z - u_ff8Depth.y) / u_ff8Depth.x;
+    if (u_ff8Floor.w > 0.0)
+    {
+        float down = dot(u_ff8Floor.xyz, vec3(rayAt(uv), 1.0));
+        return down > 1e-6 ? u_ff8Floor.w / down : 1e7;
+    }
+    return (z - u_ff8Stage.y) / u_ff8Stage.x;   // (FF8's camera not read: its stage's line)
 }
 
 vec3 viewFrom(vec2 uv, float Z)
 {
-    vec2 s = uv * u_ff8Frame.xy + vec2(u_ff8Cam.w, 0.0);
-    float xz = ((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x;
-    float yz = ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x;
-    return vec3(xz * Z, yz * Z, Z);
+    return vec3(rayAt(uv) * Z, Z);
 }
 
 vec3 viewAt(vec2 uv)
 {
-    return viewFrom(uv, viewDepth(texture2D(s_ff8Depth, uv).x));
+    return viewFrom(uv, viewDepthAt(uv, texture2D(s_ff8Depth, uv).x));
 }
 
-// A neighbour of a pixel at depth zc (view depth Zc): on the same triangle (its depth a little apart), by FF8's slope
-// within a triangle (its characters' line holds across them only: review), else on its own line.
+// A neighbour of a pixel at depth zc (view depth Zc): the floor's off the floor; a character's on the same triangle (its
+// depth a little apart) by FF8's slope within a triangle (its characters' line holds across them only: review), else
+// on its own line.
 vec3 viewNear(vec2 uv, float zc, float Zc)
 {
     float z = texture2D(s_ff8Depth, uv).x;
-    return viewFrom(uv, abs(z - zc) < 2e-4 && u_ff8Stage.x > 0.0 ? Zc + (z - zc) / u_ff8Stage.x : viewDepth(z));
+    if (pushedBack(z))
+        return viewFrom(uv, viewDepthAt(uv, z));
+    return viewFrom(uv, abs(z - zc) < 2e-4 && u_ff8Stage.x > 0.0 ? Zc + (z - zc) / u_ff8Stage.x : viewDepthAt(uv, z));
 }
 
 // FF8's backdrop (its sky dome, far 3D), from the picture's top: the farthest of 8 places there, and what stands within
@@ -76,15 +97,16 @@ float backdropDepth()
     float farthest = 0.0;
     for (int k = 0; k < 8; k++)
     {
-        float t = texture2D(s_ff8Depth, vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18)).x;
-        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, viewDepth(t));
+        vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
+        float t = texture2D(s_ff8Depth, at).x;
+        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, viewDepthAt(at, t));
     }
     return farthest > 0.0 ? 0.8 * farthest : 1e30;
 }
 
-bool backdropAt(float z, float backdrop)
+bool backdropAt(vec2 uv, float z, float backdrop)
 {
-    return z >= 0.9999 || z <= 0.0001 || viewDepth(z) >= backdrop;
+    return z >= 0.9999 || z <= 0.0001 || viewDepthAt(uv, z) >= backdrop;
 }
 
 // The sky's colour: the backdrop near the picture's top (8 places); w how many were the backdrop (outdoors).
@@ -94,7 +116,7 @@ vec4 skyColour(float backdrop)
     for (int k = 0; k < 8; k++)
     {
         vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
-        if (backdropAt(texture2D(s_ff8Depth, at).x, backdrop)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
+        if (backdropAt(at, texture2D(s_ff8Depth, at).x, backdrop)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
     }
     return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
 }
@@ -113,21 +135,29 @@ vec3 spellLight(vec2 uv)
 float nearAt(vec2 uv)
 {
     float z = texture2D(s_ff8Depth, uv).x;
-    return z < 0.9999 && z > 0.0001 ? 1.0 / max(viewDepth(z), 1.0) : 0.0;
+    return z < 0.9999 && z > 0.0001 ? 1.0 / max(viewDepthAt(uv, z), 1.0) : 0.0;
 }
 
 // The rim light here (as FF7's pass): how strongly this pixel stands at the edge of something well in front of what lies
 // behind it, 8 directions at two distances.
 float rimAt(vec2 uv, float here)
 {
+    // (against the plane through this pixel, in nearness, from its nearer neighbours: a floor receding into the distance
+    // is no edge, only what stands in front of what lies behind it)
+    vec2 t = u_ff8Frame.zw;
+    float px = nearAt(uv + vec2(t.x, 0.0)), nx = nearAt(uv - vec2(t.x, 0.0));
+    float py = nearAt(uv + vec2(0.0, t.y)), ny = nearAt(uv - vec2(0.0, t.y));
+    vec2 g = vec2(abs(px - here) < abs(here - nx) ? px - here : here - nx, abs(py - here) < abs(here - ny) ? py - here : here - ny);
     float rim = 0.0;
     for (int ring = 1; ring <= 2; ring++)
         for (int k = 0; k < 8; k++)
         {
             float a = float(k) * 0.785398 + 0.39 * float(ring);
-            vec2 at = uv + vec2(cos(a), sin(a)) * u_ff8Rim.yz * (float(ring) * 0.5);
+            vec2 o = vec2(cos(a), sin(a)) * u_ff8Rim.yz * (float(ring) * 0.5);
+            vec2 at = uv + o;
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
-            rim = max(rim, smoothstep(0.15, 0.45, (here - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5));
+            float plane = here + g.x * o.x / t.x + g.y * o.y / t.y;
+            rim = max(rim, smoothstep(0.15, 0.45, (plane - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5));
         }
     return rim;
 }
@@ -152,14 +182,14 @@ void main()
     float backdrop = backdropDepth();
     if (u_ff8Haze.w > 0.5 && u_ff8Haze.w < 1.5)
     {
-        // (the test view: blue nothing drawn (far), magenta nothing (near), red the backdrop, green the stage's line,
-        // yellow the characters' line; over the picture dimmed)
-        vec3 code = z >= 0.9999 ? vec3(0.0, 0.0, 1.0) : z <= 0.0001 ? vec3(1.0, 0.0, 1.0) : backdropAt(z, backdrop) ? vec3(1.0, 0.0, 0.0)
-            : (u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 1.0, 0.0);
+        // (the test view: blue nothing drawn (far), magenta nothing (near), red the backdrop, green the floor (what FF8
+        // pushed back, read off the floor plane), yellow the characters' line; over the picture dimmed)
+        vec3 code = z >= 0.9999 ? vec3(0.0, 0.0, 1.0) : z <= 0.0001 ? vec3(1.0, 0.0, 1.0) : backdropAt(uv, z, backdrop) ? vec3(1.0, 0.0, 0.0)
+            : pushedBack(z) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 1.0, 0.0);
         gl_FragColor = vec4(mix(scene.rgb * 0.3, code, 0.6), scene.a);
         return;
     }
-    if (backdropAt(z, backdrop))
+    if (backdropAt(uv, z, backdrop))
     {
         if (u_ff8Haze.w > 1.5) { gl_FragColor = vec4(0.0, 0.0, 0.3, scene.a); return; }   // (the shadow view: the backdrop dark blue)
         gl_FragColor = scene;   // FF8's sky or nothing of its 3D: as FF8 drew it
