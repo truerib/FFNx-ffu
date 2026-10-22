@@ -16,7 +16,8 @@
 //   hidden too, and it holds on the frame after, pumping its messages (the bridge's show is carried out on this
 //   thread), until its window shows: the first frame seen is lit, the battle's opening camera going on from there.
 //   Never held longer than HOLD_MOST_MS, never armed longer than ARMED_MOST_MS.
-// ffu_ff8_battle_held() says when it holds (the bridge's `cut_ready` then).
+// ffu_ff8_battle_held() says when it holds (1: the bridge's `cut_ready` then), is still loading (0), or is not armed
+// (-1: never armed, let go, or given up: the bridge's own readiness then).
 
 #include <windows.h>
 #include <atomic>
@@ -98,7 +99,7 @@ extern "C" __declspec(dllexport) void ffu_ff8_battle_quick(int on)
 
 extern "C" __declspec(dllexport) int ffu_ff8_battle_held()
 {
-    return held.load();
+    return held.load() ? 1 : armed.load() ? 0 : -1;
 }
 
 // Once a frame at the flip (common_flip, FF8's game thread): its swirl's counter put past the end on its first frame.
