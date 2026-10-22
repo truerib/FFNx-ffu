@@ -33,6 +33,7 @@
 #include <bx/math.h>
 
 bool ffuLookCamera();   // Final Fantasy Universe: the battle look's camera switch (ffu_look.cpp)
+float ffuTouchSwipe();   // ... and the touchpad's zoom
 
 namespace ff7::battle
 {
@@ -355,10 +356,13 @@ namespace ff7::battle
             static_cast<float>(initialCameraFocusPos.z)};
 
         float dist = bx::distance(cameraFocusPos, cameraPos);
-        float candidateDist = dist - (zoomOffset + zoomSpeed);
+        // Final Fantasy Universe: the touchpad zooms too (a swipe up, in), its distance times e^(-2.5 x the swipe), as the
+        // hub's own cameras (ffu_look.cpp ffuTouchSwipe); held with the orbit until R3 (reset())
+        float speed = zoomSpeed + (dist - zoomOffset) * (1.0f - expf(-2.5f * ::ffuTouchSwipe()));
+        float candidateDist = dist - (zoomOffset + speed);
         if(candidateDist < maxZoomDist && candidateDist > minZoomDist)
         {
-            zoomOffset = zoomOffset + zoomSpeed;
+            zoomOffset = zoomOffset + speed;
         }
 
         bx::Vec3 up = { 0, 1, 0 };

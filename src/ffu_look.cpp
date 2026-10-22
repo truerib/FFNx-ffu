@@ -251,6 +251,42 @@ float ffuLookLevel(int which)
     return which >= 0 && which < 5 ? levels[which].load() : 1.0f;
 }
 
+// The touchpad's zoom in battles (Richard 2026-10-22: "make it so the touch pad on the controller can still zoom in and
+// out"): how far a finger moved up the pad since the last frame, in pad heights x 0.5 (+ in), as the hub's own ground
+// and flight zoom read it (airship_flight.gd _touch_swipe); a new touch starts where the finger lands. Through our pad
+// DLL's ffu_pad_touch (mods/ffu-pad, xinput9_1_0.dll in FF7's and FF8's folders); 0 outside battles, with the look's
+// camera off, or without the DLL. Once a frame (FF7's battle camera: ff7/battle/camera.cpp).
+bool ffuLookCamera();
+
+float ffuTouchSwipe()
+{
+    typedef DWORD (WINAPI *touch_fn)(DWORD *down, float *y, DWORD *number);
+    static touch_fn touch = nullptr;
+    static bool looked = false;
+    static DWORD lastNumber = 0;
+    static float lastY = 0.0f;
+    static bool lastDown = false;
+    if (!looked)
+    {
+        looked = true;
+        HMODULE pad = GetModuleHandleA("xinput9_1_0.dll");
+        if (!pad) pad = LoadLibraryA("xinput9_1_0.dll");
+        touch = pad ? (touch_fn)(void *)GetProcAddress(pad, "ffu_pad_touch") : nullptr;
+        ffnx_info("FFU look: the touchpad %s\n", touch ? "zooms the battle camera" : "can't zoom (no ffu_pad_touch in xinput9_1_0.dll)");
+    }
+    DWORD down = 0, number = 0;
+    float y = 0.0f;
+    if (!touch || touch(&down, &y, &number) != 0) down = 0;
+    const bool same = down && lastDown && number == lastNumber;
+    const float swipe = same ? (y - lastY) * 0.5f : 0.0f;
+    lastDown = down != 0;
+    lastNumber = number;
+    lastY = y;
+    if (getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookCamera())
+        return 0.0f;
+    return swipe;
+}
+
 bool ffuLookAtmosphere()
 {
     int flags = frameFlags.load();
