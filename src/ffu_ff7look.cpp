@@ -65,7 +65,7 @@ namespace
     constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
     // The rim light (Richard's next list, item 2): a light edge on what stands well in front of what is behind it (a
     // character against the far ground or sky), its strength and how far in from the edge it reaches (across the picture)
-    constexpr float RIM = 1.0f, RIM_REACH = 0.004f;
+    constexpr float RIM = 1.0f, RIM_REACH = 0.006f;   // (0.004, and half the light, hardly showed)
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable

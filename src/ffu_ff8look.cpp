@@ -48,6 +48,7 @@ bool ffuLookShown();
 bool ffuLookAtmosphere();
 bool ffuLookSpell();
 bool ffuLookRim();
+bool ffuLookSoftShadows();
 float ffuLookDebug();
 bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 float ffuLookLevel(int which);
@@ -72,7 +73,7 @@ namespace
     constexpr int BANDS = 240;
     constexpr float BANDS_FROM = 0.15f, BAND = 0.003f, FLOOR_SPAN = 2000.0f;
     constexpr uint32_t BAND_LEAST = 16, KEPT_FRAMES = 120;
-    constexpr float PUSHED = 0.25f;   // (the characters' offsets reach about 0.22 at 40,000 units; the stage's start near 0.3)
+    constexpr float PUSHED = 0.15f;   // (the characters' offsets reach 0.15 at about 27,000 units; the stage's pieces sit above 0.2: its far mountains near 0.25)
     // The look's balance (as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact. The exposure
     // keeps the floor in the light as FF8 drew it (a wrapped diffuse of FLOOR_DIFFUSE: the floor faces the battle world's
     // up, the main light 49 degrees above it); in shadow, or turned away, about 35% darker; turned to the light about 6%
@@ -103,7 +104,7 @@ namespace
     // mask (the last frame's, blurred about a tenth of the picture wide by ffu_glow.cpp), multiplied in
     constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
     // The rim light (Richard's next list, item 2; as FF7's: ffu_ff7look.cpp): its strength and its reach (across the picture)
-    constexpr float RIM = 1.0f, RIM_REACH = 0.004f;
+    constexpr float RIM = 1.0f, RIM_REACH = 0.006f;   // (0.004, and half the light, hardly showed)
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;
@@ -372,7 +373,7 @@ void Renderer::ffuFF8Light()
     const float hazeMost = 0.0f;
     const bgfx::TextureHandle effectsLight = ffuGlowLight();
     const float spell = ffuLookSpell() && bgfx::isValid(effectsLight) ? SPELL * ffuLookLevel(5) : 0.0f;
-    const float rim = ffuLookRim() ? RIM : 0.0f;
+    const float rim = ffuLookRim() ? RIM : 0.0f;   // (the soft shadows ride on the lighting: u_ff8Rim.w)
     if (!ffuLookLighting() && hazeMost <= 0.0f && spell <= 0.0f && rim <= 0.0f && ffuLookDebug() <= 0.0f)
         return;   // (the haze alone at nothing: nothing to draw)
     if (bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6)
@@ -423,7 +424,7 @@ void Renderer::ffuFF8Light()
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * float(width) / float(std::max<uint16_t>(height, 1)), 0.0f };
     bgfx::setUniform(uniformSpell, spellData);
-    const float rimData[4] = { rim, RIM_REACH, RIM_REACH * float(width) / float(std::max<uint16_t>(height, 1)), 0.0f };
+    const float rimData[4] = { rim, RIM_REACH, RIM_REACH * float(width) / float(std::max<uint16_t>(height, 1)), ffuLookSoftShadows() ? 1.0f : 0.0f };
     bgfx::setUniform(uniformRim, rimData);
     // The floor (FF8's battle world's height 0, its battles' floor: the diagnostic's vertices) in the view: for a view ray
     // d, view depth = floor.w / dot(floor.xyz, d), floor.xyz the world's down as the view sees it and w its dot with the

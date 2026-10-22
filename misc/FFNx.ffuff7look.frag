@@ -144,7 +144,7 @@ void main()
         float here = nearness(uv);
         float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
         float rim = rimAt(uv, here) * u_ff7Rim.x * onStage * (1.0 - effect);
-        shown += rim * (shown * 0.6 + vec3_splat(0.04));
+        shown += rim * (shown + vec3_splat(0.08));
     }
     if (u_ff7Spell.x > 0.0 && d < 0.9999 && d > 0.0001)
     {

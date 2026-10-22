@@ -39,7 +39,7 @@ uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT); w the test view (FFU_LOOK_DEBUG: 1 what each pixel is taken for, 2 its shadow)
-uniform vec4 u_ff8Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv)
+uniform vec4 u_ff8Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv); w the soft shadows (1: on)
 uniform vec4 u_ff8Floor;   // FF8's battle floor: view depth = w / dot(xyz, the view ray); w 0: not read this frame
 
 // The view ray through this pixel (x and y per unit of view depth), by FF8's lens
@@ -215,16 +215,26 @@ void main()
 
         // The main light's shadow: 16 steps toward it through FF8's depth (what stands nearer the camera on that path,
         // and not far behind it, is in the way), fading with the step.
+        // (the soft shadows switch: three rays, the light spread a little either way across, averaged: a softer edge)
         float shadow = 0.0;
         vec3 start = p + n * (0.004 * p.z);
-        for (int k = 1; k <= 16; k++)
+        vec3 across = normalize(cross(l, n) + vec3(1e-4, 0.0, 0.0));
+        int rays = u_ff8Rim.w > 0.5 ? 3 : 1;
+        for (int r = 0; r < 3; r++)
         {
-            vec3 q = start + l * (float(k) * 0.0035 * p.z);
-            vec2 quv = uvAt(q);
-            if (q.z <= 1.0 || quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
-            float there = viewAt(quv).z;
-            float ahead = q.z - there;
-            if (ahead > 0.002 * q.z && ahead < 0.06 * q.z) shadow = max(shadow, 1.0 - float(k) / 17.0);
+            if (r >= rays) break;
+            vec3 lr = rays > 1 ? normalize(l + across * (float(r) - 1.0) * 0.14) : l;
+            float rayShadow = 0.0;
+            for (int k = 1; k <= 16; k++)
+            {
+                vec3 q = start + lr * (float(k) * 0.0035 * p.z);
+                vec2 quv = uvAt(q);
+                if (q.z <= 1.0 || quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
+                float there = viewAt(quv).z;
+                float ahead = q.z - there;
+                if (ahead > 0.002 * q.z && ahead < 0.06 * q.z) rayShadow = max(rayShadow, 1.0 - float(k) / 17.0);
+            }
+            shadow += rayShadow / float(rays);
         }
         float lit = mix(1.0, 1.0 - shadow, clamp(ndl * 5.0, 0.0, 1.0));   // (past the terminator the wrap shades it)
         shadowSeen = lit * clamp(ndl * 2.0 + 0.5, 0.0, 1.0);
@@ -257,7 +267,7 @@ void main()
     {
         // (the rim light: a light edge, a factor on the pixel's own colour and a touch of light, the battle only)
         float rim = rimAt(uv, 1.0 / max(p.z, 1.0)) * u_ff8Rim.x * onStage;
-        shaded += rim * (shaded * 0.6 + vec3_splat(0.04));
+        shaded += rim * (shaded + vec3_splat(0.08));
     }
     // The spells' light: what stands round an effect takes its light, as a factor on its own colour (the battle and its
     // ground: faded out beyond them as the lighting is)
