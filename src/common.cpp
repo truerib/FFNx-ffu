@@ -1205,6 +1205,8 @@ void common_flip(struct game_obj *game_object)
 	// Final Fantasy Universe: the battle look's switches, before the lighting draws (ffu_look.cpp)
 	void ffuLookFrame();
 	ffuLookFrame();
+	void ffuTransitionFrame();   // Final Fantasy Universe: FF8's battle loaded behind the hub's swirl (ffu_transition.cpp)
+	ffuTransitionFrame();
 
 	// Draw with lighting
 	if (!ff8 && enable_lighting) lighting.draw(game_object);

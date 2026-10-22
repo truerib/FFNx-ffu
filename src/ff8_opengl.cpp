@@ -1955,6 +1955,14 @@ int ff8_limit_fps()
 	qpc_get_time(&gametime);
 	*ff8_externals.time_volume_change_related_1A78BE0 = (1000.0 / game_object->countspersecond) * qpc_diff_time(&gametime, &last_gametime, nullptr);
 
+	// Final Fantasy Universe: a battle loading behind the hub's swirl runs unpaced, then holds (ffu_transition.cpp)
+	bool ffuTransitionLimit();
+	if (ffuTransitionLimit())
+	{
+		last_gametime = gametime;
+		return 0;
+	}
+
 	if (ff8_fps_limiter < FPS_LIMITER_60FPS)
 	{
 		switch (mode->driver_mode)
