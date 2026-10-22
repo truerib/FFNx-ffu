@@ -1214,6 +1214,10 @@ void common_flip(struct game_obj *game_object)
 	// draw any z-sorted content now that we're done drawing everything else
 	gl_draw_sorted_deferred();
 
+	// Final Fantasy Universe: the battle look's end of frame, after the deferred draws (ffu_look.cpp)
+	void ffuLookAfterDeferred();
+	ffuLookAfterDeferred();
+
 	newRenderer.drawOverlay();
 
 	if (fullscreen || borderless)

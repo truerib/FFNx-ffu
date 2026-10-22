@@ -54,8 +54,8 @@ namespace
     constexpr float AMBIENT = 0.5f, KEY = 0.85f, WRAP = 0.35f, CONTACT = 0.6f;
     // The haze (as FF9's outdoors: BattleScene.cs): from half again the depth FF8's 3D stands at, full (its most) at its
     // backdrop (the sky dome: FF8 draws its sky as far 3D, with depth), toward the backdrop's own colour near the picture's
-    // top (the shader finds it). The backdrop itself, at 90% of the farthest depth drawn or beyond, is neither lit nor hazed.
-    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f, BACKDROP = 0.9f;
+    // top (the shader finds it). The backdrop itself, at 70% of the farthest depth drawn or beyond, is neither lit nor hazed.
+    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f, BACKDROP = 0.7f;   // (a dome round the camera stands nearer at the picture's sides: 0.79 at the corners)
     // FF8's battle camera: its view matrix as FF8's LookAt writes it each frame (0x503230 -> 0x50CB40: int16 rows,
     // 4.12, view = M * world; side-session research 2026-10-22 battle-camera-stick.md), so the main light stays put in
     // FF8's battle world as its cameras swing. Toward the light in that world (y down): high, from one side.

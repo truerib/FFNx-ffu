@@ -60,10 +60,12 @@ void main()
         }
         float z = viewDepth(d);
         // Outdoors: two or more of those places are the backdrop and it stands well beyond the stage.
-        if (sky.w >= 2.0 && backdrop > 2.0 * u_ff7Haze.x && z < backdrop)
+        // (eased in as the backdrop stands farther beyond the stage: no step as FF7's cameras move)
+        float outdoors = smoothstep(1.6, 2.4, backdrop / max(u_ff7Haze.x, 1.0));
+        if (sky.w >= 2.0 && outdoors > 0.0 && z < backdrop)
         {
             float effect = u_ff7Haze.w > 0.5 ? clamp(scene.a * 3.0, 0.0, 1.0) : 0.0;
-            float haze = u_ff7Haze.y * clamp((z - u_ff7Haze.x) / (backdrop - u_ff7Haze.x), 0.0, 1.0) * (1.0 - effect);
+            float haze = u_ff7Haze.y * outdoors * clamp((z - u_ff7Haze.x) / (backdrop - u_ff7Haze.x), 0.0, 1.0) * (1.0 - effect);
             shown = mix(shown, sky.rgb / sky.w, haze);
         }
     }

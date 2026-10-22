@@ -109,6 +109,7 @@ bool ffuLookLighting()
 void ffuSurveyFrame();    // ffu_survey.cpp
 void ffuFF8LookFrame();   // ffu_ff8look.cpp
 void ffuFF7LookFrame();   // ffu_ff7look.cpp
+void ffuFF7LookFrameEnd();
 
 namespace
 {
@@ -187,6 +188,13 @@ void ffuLookFrame()
         tuned = false;
         ffnx_info("ffu-look: FF7's battle lighting back to FFNx's own config\n");
     }
+}
+
+// After the frame's deferred draws (common_flip; with FFNx's lighting on, all of FF7's battle draws are deferred and
+// drawn there).
+void ffuLookAfterDeferred()
+{
+    ffuFF7LookFrameEnd();
 }
 
 // Just after FFNx's lighting drew (common_flip): at a new battle FFNx has just read its config for it, so the look's

@@ -43,6 +43,8 @@ namespace ff7::battle
     {
         if(gl_defer_battle_depth_clear()) return;
 
+        void ffuFF7BeforeDepthClear();   // Final Fantasy Universe: FF7's battle haze and bars, before the menus (ffu_ff7look.cpp)
+        ffuFF7BeforeDepthClear();
         newRenderer.clearDepthBuffer();
     }
 

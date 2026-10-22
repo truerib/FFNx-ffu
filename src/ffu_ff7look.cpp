@@ -18,8 +18,9 @@
 //
 // The survey (ffu_survey.cpp, FFU_LOOK_SURVEY=1) found that in FF7's battle frames its 3D (untransformed draws) comes
 // first, about 140 draws, and its flat 2D (the menus: every rhw 1) after, with a handful of 3D draws (cursors, effects)
-// among them. So at the frame's first flat draw after some 3D (or at the flip, in a frame with none) this pass draws the
-// picture so far into a target of its own and copies it back, as FF8's does (ffu_ff8look.cpp):
+// among them; and FFNx clears FF7's depth just before the menus (its battle_depth_clear). So just there (or at the
+// frame's end, in a frame without menus) this pass draws the picture so far into a target of its own and copies it back,
+// as FF8's does (ffu_ff8look.cpp):
 // - the haze: outdoors (FF7's backdrop, its far scenery, seen at the picture's top), what stands beyond its stage fades
 //   toward the backdrop's own colour; the view depth comes from FF7's own depth and the projection FFNx drew its 3D with
 //   (clip = view x projection x viewport, FFNx.vert); the stage's size from FF7's battle camera (its distance to what it
@@ -95,26 +96,28 @@ namespace
     }
 }
 
-// From gl_draw_indexed_primitive for every draw of an FF7 battle frame: true at the frame's first flat draw after some
-// 3D, when the pass goes first.
+// From gl_draw_indexed_primitive for every draw of an FF7 battle frame (with FFNx's lighting on, as its deferred draws
+// are drawn at the flip): notes that FF7's 3D has begun. The pass itself goes just before FF7 clears its depth for its
+// menus (ffuFF7BeforeDepthClear: FFNx's battle_depth_clear, deferred in draw order), or at the frame's end.
 bool ffuFF7LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
-    if (ff8 || passedThisFrame || getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookShown())
-        return false;
-    if (vertextype != TLVERTEX)
-    {
+    (void)vertices; (void)vertexcount;
+    if (!ff8 && vertextype != TLVERTEX && getmode_cached()->driver_mode == MODE_BATTLE)
         seen3D = true;
-        return false;
-    }
-    if (!seen3D) return false;
-    for (uint32_t i = 0; i < vertexcount; i++)
-        if (vertices[i].color.w != 1.0f) return false;   // (not flat: not the menus yet)
-    passedThisFrame = true;
-    return true;
+    return false;
 }
 
-// Once a frame (ffuLookFrame, at the flip, before the frame is shown): a frame with 3D and no flat draw gets the pass
-// here; outside battles its program and target are made (Rules 59, 89).
+// ff7::battle::battle_depth_clear, as it clears FF7's depth before the menus: the picture so far is FF7's 3D.
+void ffuFF7BeforeDepthClear()
+{
+    if (ff8 || passedThisFrame || !seen3D || getmode_cached()->driver_mode != MODE_BATTLE || !ffuLookShown())
+        return;
+    passedThisFrame = true;
+    newRenderer.ffuFF7Pass();
+}
+
+// At the flip, before FFNx's lighting (ffuLookFrame): outside battles the pass's program and target are made, so nothing
+// is made as a battle starts (Rules 59, 89).
 void ffuFF7LookFrame()
 {
     if (ff8) return;
@@ -123,7 +126,14 @@ void ffuFF7LookFrame()
         newRenderer.ffuFF7Prepare();
         bars = barsHold = 0.0f;
     }
-    else if (!passedThisFrame && seen3D && ffuLookShown())
+}
+
+// After the frame's deferred draws (ffuLookAfterDeferred): a battle frame with 3D whose menus never cleared the depth
+// (a summon's, a limit's) gets the pass here; then the frame's notes start again.
+void ffuFF7LookFrameEnd()
+{
+    if (ff8) return;
+    if (!passedThisFrame && seen3D && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookShown())
         newRenderer.ffuFF7Pass();
     seen3D = passedThisFrame = false;
 }
@@ -170,7 +180,7 @@ void Renderer::ffuFF7Prepare()
     ffnx_info("FFU FF7 haze: target made (%ux%u)\n", targetWidth, targetHeight);
 }
 
-// The pass (gl_draw_indexed_primitive, just before FF7's first flat draw of a battle frame, or the flip).
+// The pass (just before FF7 clears its depth for its menus, or at the frame's end).
 void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
