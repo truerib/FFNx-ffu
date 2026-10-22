@@ -364,6 +364,11 @@ static void logBattleFrames()
     }
     else
     {
+        static bool wasVisible = false;   // (where the window shows, against the frames' times)
+        const bool visible = gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd);
+        if (visible != wasVisible)
+            ffnx_info("FFU frames: the window %s %.2f s into the battle\n", visible ? "shown" : "hidden", ms(battleFrom, now) / 1000.0);
+        wasVisible = visible;
         const double frame = ms(last, now);
         const bgfx::Stats *stats = bgfx::getStats();
         const double gpu = stats && stats->gpuTimerFreq > 0 ? double(stats->gpuTimeEnd - stats->gpuTimeBegin) * 1000.0 / double(stats->gpuTimerFreq) : -1.0;
@@ -391,7 +396,19 @@ void ffuLookFrame()
 {
     logBattleFrames();
     frameFlags.store(requestedFlags.load());
-    shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
+    // (the first battle of this run warms the look up while it is still hidden, behind the hub's swirl: its targets are
+    // made and its passes' pipelines built before the window shows, where FF7 stalled 370 ms; once, and for at most 300
+    // hidden frames, as a guest's hidden battle in a mixed party never shows)
+    const bool visible = gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd);
+    static bool warmed = false;
+    static int warmFrames = 0;
+    const bool battleNow = getmode_cached()->driver_mode == MODE_BATTLE;
+    const bool warming = !warmed && battleNow && !visible && warmFrames < 300;
+    if (warming && warmFrames++ == 0)
+        ffnx_info("FFU look: warming up behind the cut (its targets and passes made before the battle shows)\n");
+    if ((battleNow && visible) || warmFrames >= 300)
+        warmed = true;
+    shown.store(visible || warming);
     impactFrame();
     ffuSurveyFrame();
     ffuFF8LookFrame();
