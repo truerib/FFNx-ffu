@@ -1273,7 +1273,10 @@ int is_q_pressed = 0;
 
 int ff8_is_window_active()
 {
-	if (gameHwnd == GetActiveWindow() || ff8_always_capture_input)
+	// Final Fantasy Universe: the own battle engine draws FF8's battle in its own window, so FF8 takes its input hidden
+	// (its pad through the pad DLL) while that battle plays (ffu_layer.cpp ffuOwnLayerBlending: in a battle only)
+	bool ffuOwnLayerBlending();
+	if (gameHwnd == GetActiveWindow() || ff8_always_capture_input || ffuOwnLayerBlending())
 	{
 		ff8_externals.engine_eval_keyboard_gamepad_input();
 		ff8_externals.has_keyboard_gamepad_input();
