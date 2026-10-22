@@ -105,6 +105,17 @@ namespace
     struct Meta { char id[24]; float unitsPerR; uint32_t depthFormat; float anchors[4]; uint32_t anchored; };
     Meta captured = {};
     Meta slotMeta[3] = {};
+    // The own battle engine's warm-up (BattleAsk v4 warm): the battle layer's target and each readback slot made and
+    // read once outside a battle, never published, so a battle's load never pays their first touch (Rule 89).
+    bool warming = false;
+    int warmedSlots = 0;
+    bool slotWarm[3] = {};
+
+    bool warmWanted()
+    {
+        const BattleAsk *ask = battleAsk();
+        return ask && ask->version >= 4 && ask->warm && warmedSlots < 3 && getmode_cached()->driver_mode != MODE_BATTLE;
+    }
 
     // FFNx.ffu7.sh GameDepthAt on the CPU: the shader's mul(mul(viewport, projection), v) on FF7's row-major
     // matrices is the row vector (0, 0, w, 1) * projection * viewport.
@@ -123,7 +134,8 @@ namespace
     // version 2 also the two anchors of the frame being drawn, in the game's own screen units (its 2D's), so the host
     // places each frame by its own anchors.
     struct BattleAsk { uint32_t magic, version; volatile LONG on; float anchors[4]; volatile LONG anchored;
-                       volatile LONG keep_flat; };   // (version 3: the own battle engine's layer, its flat draws kept)
+                       volatile LONG keep_flat;    // (version 3: the own battle engine's layer, its flat draws kept)
+                       volatile LONG warm; };      // (version 4: its target and readbacks made now, outside a battle)
     const BattleAsk *battleAsk()
     {
         static const BattleAsk *found = nullptr;
@@ -414,6 +426,16 @@ void Renderer::ffuBattleLayerFrameEnd()
         battleMeta(captured, ffuLayerWidth, ffuLayerHeight);
         ffuLayerEnd();
     }
+    else if (!ffuLayerActive && warmWanted())   // one slot a frame, outside a battle
+    {
+        warming = true;
+        if (ffuLayerBegin())
+        {
+            ffuLayerEnd();
+            if (warmedSlots == 3) ffnx_info("FFU layer: the battle layer made and read once, outside a battle (warm)\n");
+        }
+        warming = false;
+    }
     ffuGuestLayersFrameEnd();
 }
 
@@ -454,10 +476,10 @@ void Renderer::ffuLayerRender()
 // the host swapped in its copy, a flicker (2026-10-17).
 void Renderer::ffuLayerPrepare()
 {
-    if (!layerWanted() && !battleWanted()) return;
+    if (!layerWanted() && !battleWanted() && !warming) return;
     static int asked = -1;   // FFU_FF7_LAYER_SCALE=2: half resolution (tests); a battle's whole frame: half by default
     if (asked < 0) { const char *value = getenv("FFU_FF7_LAYER_SCALE"); asked = value && atoi(value) > 1 ? atoi(value) : 0; }
-    const int scale = asked > 1 ? asked : battleWanted() ? 2 : 1;   // (each call: a battle and the world map differ)
+    const int scale = asked > 1 ? asked : battleWanted() || warming ? 2 : 1;   // (each call: a battle and the world map differ)
     const uint16_t width = framebufferWidth / scale, height = framebufferHeight / scale;
     if (bgfx::isValid(ffuLayerFrameBuffer) && width == ffuLayerWidth && height == ffuLayerHeight) return;
     for (const auto &slot : ffuLayerSlots) if (slot.pending) return;   // a resolution change: once the reads are in
@@ -490,7 +512,7 @@ void Renderer::ffuLayerPrepare()
 
 bool Renderer::ffuLayerBegin(bool touch)
 {
-    if ((!layerWanted() && !battleWanted()) || ffuLayerActive) return false;
+    if ((!layerWanted() && !battleWanted() && !warming) || ffuLayerActive) return false;
     ffuLayerPrepare();
     if (!bgfx::isValid(ffuLayerFrameBuffer)) return false;
     const uint16_t width = ffuLayerWidth, height = ffuLayerHeight;
@@ -535,6 +557,8 @@ void Renderer::ffuLayerEnd()
     slot->depths[0] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 30000.0f);
     slot->depths[1] = gameDepthAt(internalState.d3dViewMatrix, internalState.d3dProjectionMatrix, 60000.0f);
     slotMeta[slot - ffuLayerSlots] = captured;
+    slotWarm[slot - ffuLayerSlots] = warming;
+    if (warming) ++warmedSlots;
 }
 
 void Renderer::ffuLayerPoll()
@@ -551,7 +575,8 @@ void Renderer::ffuLayerPoll()
         for (auto &candidate : ffuLayerSlots)
             if (candidate.pending && candidate.pending <= ffuLastFrame && (!slot || candidate.pending < slot->pending)) slot = &candidate;
         if (!slot) return;
-        publishLayer(*slot);
+        if (!slotWarm[slot - ffuLayerSlots]) publishLayer(*slot);   // (a warm-up's read: never published)
+        slotWarm[slot - ffuLayerSlots] = false;
         slot->pending = 0;
     }
 }
