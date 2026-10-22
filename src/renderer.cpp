@@ -1439,7 +1439,32 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
         case RendererCullMode::BACK: internalState.state |= BGFX_STATE_CULL_CCW;
         }
 
-        switch (internalState.blendMode)
+        // Final Fantasy Universe: the own battle engine's FF8 layer, its alpha the cover of what lies behind (ffu_layer.cpp)
+        bool ffuOwnLayerBlending();
+        if (ffuOwnLayerBlending()) switch (internalState.blendMode)
+        {
+        case RendererBlendMode::BLEND_AVG:
+            internalState.state |= BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD);
+            internalState.state |= BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_INV_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_INV_SRC_ALPHA);
+            break;
+        case RendererBlendMode::BLEND_ADD:
+            internalState.state |= BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD);
+            internalState.state |= BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE);
+            break;
+        case RendererBlendMode::BLEND_SUB:
+            internalState.state |= BGFX_STATE_BLEND_EQUATION_SEPARATE(BGFX_STATE_BLEND_EQUATION_REVSUB, BGFX_STATE_BLEND_EQUATION_ADD);
+            internalState.state |= BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE);
+            break;
+        case RendererBlendMode::BLEND_25P:
+            internalState.state |= BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD);
+            internalState.state |= BGFX_STATE_BLEND_FUNC_SEPARATE(BGFX_STATE_BLEND_SRC_ALPHA, BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ZERO, BGFX_STATE_BLEND_ONE);
+            break;
+        case RendererBlendMode::BLEND_NONE:
+            internalState.state |= BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD);
+            internalState.state |= BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_ONE, BGFX_STATE_BLEND_ZERO);
+            break;
+        }
+        else switch (internalState.blendMode)
         {
         case RendererBlendMode::BLEND_AVG:
             internalState.state |= BGFX_STATE_BLEND_EQUATION(BGFX_STATE_BLEND_EQUATION_ADD);

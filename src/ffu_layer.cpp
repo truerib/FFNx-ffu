@@ -122,7 +122,8 @@ namespace
     // exports ffu_ff7_battle_layer {'F7BL', version, on}, FF8's (dinput.dll) ffu_ff8_battle_layer {'F8BL', ...}; from
     // version 2 also the two anchors of the frame being drawn, in the game's own screen units (its 2D's), so the host
     // places each frame by its own anchors.
-    struct BattleAsk { uint32_t magic, version; volatile LONG on; float anchors[4]; volatile LONG anchored; };
+    struct BattleAsk { uint32_t magic, version; volatile LONG on; float anchors[4]; volatile LONG anchored;
+                       volatile LONG keep_flat; };   // (version 3: the own battle engine's layer, its flat draws kept)
     const BattleAsk *battleAsk()
     {
         static const BattleAsk *found = nullptr;
@@ -752,7 +753,18 @@ bool ffuLayerDropsFlat()
 {
     if (!ff8 || getmode_cached()->driver_mode != MODE_BATTLE) return false;
     const BattleAsk *ask = battleAsk();
-    return ask && ask->on;
+    return ask && ask->on && !(ask->version >= 3 && ask->keep_flat);
+}
+
+// The own battle engine's layer (docs/battle-engine.md step 4: FF8's bridge asks with keep_flat, FF8's window never shown):
+// every FF8 battle draw keeps FFNx's colour blend, and its alpha counts how much of what lies behind still shows
+// (renderer.cpp): the layer starts transparent black, an opaque draw makes it 1, FF8's average blend 1/2 + A/2, its
+// additive, subtractive and quarter blends leave it, so the engine lays it on as ours x (1 - A) + layer.
+bool ffuOwnLayerBlending()
+{
+    if (!ff8 || getmode_cached()->driver_mode != MODE_BATTLE) return false;
+    const BattleAsk *ask = battleAsk();
+    return ask && ask->on && ask->version >= 3 && ask->keep_flat;
 }
 
 bool ffuGuestLayersDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
