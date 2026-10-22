@@ -32,15 +32,24 @@ SAMPLER2D(s_ff8Depth, 1);
 uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = offset + scale * (of + H * X / Z))
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
 uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
-uniform vec4 u_ff8Depth;   // FF8's depth = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
+uniform vec4 u_ff8Depth;   // FF8's own depth = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
+uniform vec4 u_ff8Stage;   // the stage's depth = x * view z + y, the depths from z up (w 1) or down (w -1); w 0: none this frame
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
 
+// The view depth of FF8's depth z: its stage's own way where the stage's depths lie (FF8 pushes the stage back:
+// ffu_ff8look.cpp), its characters' and effects' elsewhere.
+float viewDepth(float z)
+{
+    bool stage = u_ff8Stage.w > 0.5 ? z >= u_ff8Stage.z : (u_ff8Stage.w < -0.5 && z <= u_ff8Stage.z);
+    return stage ? (z - u_ff8Stage.y) / u_ff8Stage.x : (z - u_ff8Depth.y) / u_ff8Depth.x;
+}
+
 vec3 viewAt(vec2 uv)
 {
     float z = texture2D(s_ff8Depth, uv).x;
-    float Z = (z - u_ff8Depth.y) / u_ff8Depth.x;
+    float Z = viewDepth(z);
     vec2 s = uv * u_ff8Frame.xy + vec2(u_ff8Cam.w, 0.0);
     float xz = ((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x;
     float yz = ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x;
@@ -55,14 +64,14 @@ float backdropDepth()
     for (int k = 0; k < 8; k++)
     {
         float t = texture2D(s_ff8Depth, vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18)).x;
-        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, (t - u_ff8Depth.y) / u_ff8Depth.x);
+        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, viewDepth(t));
     }
     return farthest > 0.0 ? 0.8 * farthest : 1e30;
 }
 
 bool backdropAt(float z, float backdrop)
 {
-    return z >= 0.9999 || z <= 0.0001 || (z - u_ff8Depth.y) / u_ff8Depth.x >= backdrop;
+    return z >= 0.9999 || z <= 0.0001 || viewDepth(z) >= backdrop;
 }
 
 // The sky's colour: the backdrop near the picture's top (8 places); w how many were the backdrop (outdoors).

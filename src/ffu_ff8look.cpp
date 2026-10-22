@@ -23,8 +23,11 @@
 // FF8's own depth, into a target of its own, copies that back over FFNx's colour and gives FFNx a new view to carry on
 // with. Its views are FFNx's own count (the pass falls between FFNx's draws); the one with a frame buffer set draws into
 // the pass's own target, so a later frame's FFNx view on that id (FF8's battles never reset theirs) touches only that.
-// FF8's depth is linear in view depth: its scale and offset are fitted each frame from the 3D vertices (z against
-// 1 / rhw); the main light stands in FF8's battle world, turned into the view by FF8's battle camera matrix each frame.
+// FF8's depth is linear in view depth, in one of two ways (sub_461220, 0x461210): its characters and effects at
+// 1.5235901e-5 a unit + 0.0015, its stage at its globals' slope and offset (0xB7CEE0; 0x1CA9E9C x 0x1CA882C), which push
+// the stage back as the PlayStation's ordering table kept it behind them. Each frame the pass learns from FF8's draws
+// which depths are the stage's (ffuFF8LookDraw), so the floor is lit, shadowed and hazed at its true depth; the main
+// light stands in FF8's battle world, turned into the view by FF8's battle camera matrix each frame.
 // Off with the look's lighting switched off, in HDR, with MSAA, and while a battle frame goes to the live layer.
 
 #include <algorithm>
@@ -51,6 +54,10 @@ namespace
     // FF8's lens (as the fork's world renderer reads it: src/ff8/world/renderer.cpp)
     constexpr uint32_t GTE_H = 0x1CA92E4, GTE_OFX = 0x1CA92DE, GTE_OFY = 0x1CA92E2;
     constexpr uint32_t SSIGPU_SCALE_X = 0xB7CC14, SSIGPU_SCALE_Y = 0xB7CC18, SSIGPU_OFFSET_X = 0x1CA89E0, SSIGPU_OFFSET_Y = 0x1CA89E4;
+    // FF8's depth (sub_461220): its own, and the stage's from its globals at the draw (Richard 2026-10-22: "I can't see any
+    // other changes": the beach's sand and sea read as far as the sky, so the pass left them as FF8 drew them)
+    constexpr float OWN_SLOPE = 1.5235901e-05f, DEPTH_BIAS = 0.0015f;
+    constexpr uint32_t STAGE_SLOPE = 0xB7CEE0, STAGE_OFFSET_A = 0x1CA9E9C, STAGE_OFFSET_B = 0x1CA882C;
     // The look's balance (the same as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact
     // (stronger than FF9's: FF8's own colours carry their own soft light; Richard 2026-10-22: "I can't see any other
     // changes": a surface turned to the light about 24% brighter, one turned away or in shadow about 35% darker)
@@ -73,7 +80,7 @@ namespace
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformLens = BGFX_INVALID_HANDLE, uniformCam = BGFX_INVALID_HANDLE, uniformFrame = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformLight = BGFX_INVALID_HANDLE, uniformLook = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE, uniformStage = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;
@@ -81,15 +88,88 @@ namespace
     bgfx::ViewId litView = 0;   // the view that last drew into it (given no frame buffer before it is remade)
     bool passedThisFrame = false;
     uint32_t passes = 0;
-    // This frame's depth samples (z against view depth 1 / rhw), every fourth vertex of the 3D draws.
-    double sumX = 0.0, sumY = 0.0, sumXX = 0.0, sumXY = 0.0;
+    // This frame's 3D draws: the depth they stand at (1 / rhw, every fourth vertex) and how FF8 wrote their vertices'
+    // depths: its own way, the stage's (one slope and offset in a frame, its depths apart from the own ones: told apart
+    // in the shader by depth alone), or neither (counted).
+    double sumX = 0.0;
     uint32_t samples = 0;
+    struct Depths
+    {
+        uint32_t own = 0, stage = 0, neither = 0;   // (vertices)
+        float ownMin = 2.0f, ownMax = -1.0f, stageMin = 2.0f, stageMax = -1.0f, slope = 0.0f, offset = 0.0f;
+        bool stageWay = false, mixed = false;   // (the stage's draws made in more than one way)
+    } depths;
 
     struct QuadVertex { float x, y, z, u, v; };
 }
 
+// How FF8 wrote this 3D draw's depths (sub_461220), vertex by vertex: its own way, or the stage's from its globals now
+// (they still hold what the draw's vertices were made with); each way's range of depths kept.
+static void countDepths(const struct nvertex *vertices, uint32_t vertexcount)
+{
+    const float slope = *(const float *)STAGE_SLOPE, offset = *(const float *)STAGE_OFFSET_A * *(const float *)STAGE_OFFSET_B;
+    bool stageSeen = false;
+    for (uint32_t i = 0; i < vertexcount; i++)
+    {
+        const float rhw = vertices[i].color.w, z = vertices[i]._.z;
+        if (!(rhw > 0.0f && rhw < 0.5f)) continue;
+        const float view = 1.0f / rhw;
+        const bool own = fabsf(z - (OWN_SLOPE * view + DEPTH_BIAS)) < 1e-5f + 1e-5f * z;
+        const bool stage = fabsf(z - (slope * view + offset + DEPTH_BIAS)) < 1e-5f + 1e-4f * z;
+        if (own && stage)
+            continue;   // (where the two ways meet: the same view depth either way)
+        if (own)
+        {
+            depths.own++;
+            depths.ownMin = std::min(depths.ownMin, z);
+            depths.ownMax = std::max(depths.ownMax, z);
+        }
+        else if (stage)
+        {
+            depths.stage++;
+            depths.stageMin = std::min(depths.stageMin, z);
+            depths.stageMax = std::max(depths.stageMax, z);
+            stageSeen = true;
+        }
+        else
+            depths.neither++;
+    }
+    if (!stageSeen)
+        return;
+    if (!depths.stageWay)
+    {
+        depths.stageWay = true;
+        depths.slope = slope;
+        depths.offset = offset;
+    }
+    else if (fabsf(slope - depths.slope) > 1e-6f * fabsf(depths.slope) + 1e-12f || fabsf(offset - depths.offset) > 1e-6f)
+        depths.mixed = true;
+}
+
+// The stage's depth this frame for the shader: x its slope, y its offset, z where its depths begin, w 1 when they lie
+// beyond the own ones, -1 when nearer, 0 when the two can't be told apart by depth (then all is read the own way).
+static void stageDepths(float stage[4])
+{
+    stage[0] = depths.slope;
+    stage[1] = depths.offset + DEPTH_BIAS;
+    stage[2] = 2.0f;
+    stage[3] = 0.0f;
+    if (depths.stage == 0 || depths.mixed || !(depths.slope > 1e-9f))
+        return;
+    if (depths.own == 0 || depths.stageMin > depths.ownMax + 1e-4f)
+    {
+        stage[2] = depths.own == 0 ? depths.stageMin - 1e-4f : 0.5f * (depths.ownMax + depths.stageMin);
+        stage[3] = 1.0f;
+    }
+    else if (depths.stageMax < depths.ownMin - 1e-4f)
+    {
+        stage[2] = 0.5f * (depths.stageMax + depths.ownMin);
+        stage[3] = -1.0f;
+    }
+}
+
 // From gl_draw_indexed_primitive, for every draw of an FF8 battle frame before it is drawn: its 3D vertices feed the depth
-// fit; true at the frame's first flat draw after some 3D, when the lighting pass goes first.
+// depths; true at the frame's first flat draw after some 3D, when the lighting pass goes first.
 bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
     if (!ff8 || passedThisFrame || vertextype != TLVERTEX || getmode_cached()->driver_mode != MODE_BATTLE || !(ffuLookLighting() || ffuLookAtmosphere())
@@ -104,12 +184,12 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
         }
     if (!flat)
     {
+        countDepths(vertices, vertexcount);
         for (uint32_t i = 0; i < vertexcount; i += 4)
         {
             const float rhw = vertices[i].color.w, z = vertices[i]._.z;
             if (!(rhw > 0.0f && rhw < 0.5f) || !(z > 0.0f && z < 1.0f)) continue;   // (FFNx maps an infinite rhw to 1)
-            const double x = 1.0 / rhw, y = z;
-            sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
+            sumX += 1.0 / rhw;
             samples++;
         }
         return false;
@@ -129,8 +209,9 @@ void ffuFF8LookFrame()
     if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere()) && ffuLookShown())
         newRenderer.ffuFF8Light();
     passedThisFrame = false;
-    sumX = sumY = sumXX = sumXY = 0.0;
+    sumX = 0.0;
     samples = 0;
+    depths = Depths();
 }
 
 bool Renderer::ffuFF8Ready()
@@ -154,6 +235,7 @@ bool Renderer::ffuFF8Ready()
     uniformLight = bgfx::createUniform("u_ff8Light", bgfx::UniformType::Vec4);
     uniformLook = bgfx::createUniform("u_ff8Look", bgfx::UniformType::Vec4);
     uniformHaze = bgfx::createUniform("u_ff8Haze", bgfx::UniformType::Vec4);
+    uniformStage = bgfx::createUniform("u_ff8Stage", bgfx::UniformType::Vec4);
     samplerScene = bgfx::createUniform("s_ff8Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff8Depth", bgfx::UniformType::Sampler);
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
@@ -229,14 +311,8 @@ void Renderer::ffuFF8Light()
     if (!bgfx::isValid(litTarget))
         return;
 
-    // The depth fit: FF8's z = a * view depth + b (FF8 writes about 1.5236e-5 a unit and 0.0015)
-    float a = 1.5235901e-05f, b = 0.0015f;
-    const double n = double(samples), det = n * sumXX - sumX * sumX;
-    if (samples >= 16 && det > 1e-9)
-    {
-        const float fitA = float((n * sumXY - sumX * sumY) / det), fitB = float((sumY - fitA * sumX) / n);
-        if (fitA > 0.75f * a && fitA < 1.25f * a) { a = fitA; b = fitB; }   // (an outlier draw keeps FF8's own numbers)
-    }
+    float stage[4];
+    stageDepths(stage);
 
     // 1: the picture so far drawn lit into the pass's own target (FFNx's colour and FF8's depth read). Each of the
     // pass's views draws in order, as FFNx's own view 1 (bgfx's default mode sorts: the HUD after it would be sorted)
@@ -252,16 +328,16 @@ void Renderer::ffuFF8Light()
     const float gameWidth = widescreen_enabled ? float(*ff8_externals.ssigpu_viewport_width_dword_B7CBF8) : float(game_width);
     const float cam[4] = { lensH, float(*(const int16_t *)GTE_OFX), float(*(const int16_t *)GTE_OFY), left };
     const float frame[4] = { gameWidth, float(game_height), 1.0f / width, 1.0f / height };
-    const float depthFit[4] = { a, b, ffuGlowWanted() ? 1.0f : 0.0f, ffuLookLighting() ? 1.0f : 0.0f };   // (w: the lighting itself; the pass also runs for the haze alone)
+    const float depthFit[4] = { OWN_SLOPE, DEPTH_BIAS, ffuGlowWanted() ? 1.0f : 0.0f, ffuLookLighting() ? 1.0f : 0.0f };   // (w: the lighting itself; the pass also runs for the haze alone)
     float toLight[3], up[3];
     const bool fromWorld = towardLight(toLight, up);
     // Richard's sliders scale the light, the light from all around and the contact shading; the exposure stays, so a
     // stronger light is a brighter battle
     const float light[4] = { toLight[0], toLight[1], toLight[2], KEY * ffuLookLevel(0) };
     const float look[4] = { AMBIENT * ffuLookLevel(1), 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), std::min(CONTACT * ffuLookLevel(2), 1.0f) };
-    const float stage = samples > 0 ? float(sumX / double(samples)) : 10000.0f;   // (the depth FF8's 3D stands at, on average)
+    const float standsAt = samples > 0 ? float(sumX / double(samples)) : 10000.0f;   // (the depth FF8's 3D stands at, on average)
     const float hazeMost = ffuLookAtmosphere() ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;
-    const float haze[4] = { HAZE_START * stage, ffuLookSplit(), hazeMost, 0.0f };   // (y: the test split, FFU_LOOK_SPLIT)
+    const float haze[4] = { HAZE_START * standsAt, ffuLookSplit(), hazeMost, 0.0f };   // (y: the test split, FFU_LOOK_SPLIT)
     bgfx::setUniform(uniformLens, lens);
     bgfx::setUniform(uniformCam, cam);
     bgfx::setUniform(uniformFrame, frame);
@@ -269,6 +345,7 @@ void Renderer::ffuFF8Light()
     bgfx::setUniform(uniformLight, light);
     bgfx::setUniform(uniformLook, look);
     bgfx::setUniform(uniformHaze, haze);
+    bgfx::setUniform(uniformStage, stage);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::TransientVertexBuffer vertices;
@@ -296,7 +373,10 @@ void Renderer::ffuFF8Light()
     bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
     bgfx::touch(backendViewId);
     if (passes++ % 600 == 0)
-        ffnx_info("FFU FF8 lighting: pass %u (depth %.4g x + %.4g from %u samples; lens H %.0f, scale %.3f x %.3f; view %u; "
-                  "light %s %.2f %.2f %.2f, the world's up in view %.2f %.2f %.2f)\n", passes, a, b, samples, lensH, scaleX, scaleY,
-                  backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view", toLight[0], toLight[1], toLight[2], up[0], up[1], up[2]);
+        ffnx_info("FFU FF8 lighting: pass %u (depth: %u vertices its own way, z %.4f..%.4f; %u the stage's%s, z %.4f..%.4f, %.4g x + %.4g, "
+                  "read from %.4f %s; %u neither; lens H %.0f, scale %.3f x %.3f; view %u; light %s %.2f %.2f %.2f, the world's up in view "
+                  "%.2f %.2f %.2f)\n", passes, depths.own, depths.ownMin, depths.ownMax, depths.stage, depths.mixed ? " (mixed)" : "",
+                  depths.stageMin, depths.stageMax, stage[0], stage[1], stage[2], stage[3] > 0.0f ? "up" : stage[3] < 0.0f ? "down" : "(not told apart)",
+                  depths.neither, lensH, scaleX, scaleY, backendViewId, fromWorld ? "from FF8's camera" : "fixed to the view",
+                  toLight[0], toLight[1], toLight[2], up[0], up[1], up[2]);
 }
