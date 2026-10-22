@@ -113,7 +113,7 @@ namespace
     bool passedThisFrame = false;
     uint32_t passes = 0;
     // This frame's depth-writing 3D draws: every fourth vertex's view depth (1 / rhw) and depth
-    struct Sample { float view, z; };
+    struct Sample { float view, z, x, y; };   // (x, y: its place on the screen, game units: the floor's self-check)
     Sample sampled[MOST_SAMPLES];
     uint32_t samples = 0;
     uint32_t sampleSeed = 1;   // (once full, each sample takes a place at random: every draw keeps its share)
@@ -123,7 +123,7 @@ namespace
         float slope = CHARACTERS_SLOPE, offset = CHARACTERS_OFFSET;   // (its characters'; as measured until fitted)
         float stageSlope = MEASURED_SLOPE, stageOffset = 0.0f, stageFrom = 2.0f;   // (its stage's, from that depth up; none: 2)
         uint32_t stage = 0, rest = 0, pushed = 0;
-        float standsAt = 10000.0f, pushedLowest = 2.0f, restMost = -1.0f;
+        float standsAt = 10000.0f, pushedLowest = 2.0f, restMost = -1.0f, farthest = 0.0f;
         bool kept = false;   // (this frame's stage is an earlier frame's)
     };
     DepthLines lastLines;
@@ -201,25 +201,33 @@ static DepthLines depthLines()
         const float fitSlope = float((n * sxy - sx * sy) / det), fitOffset = float((sy - fitSlope * sx) / n);
         if (fitSlope > 2e-6f && fitSlope < 5e-5f) { lines.slope = fitSlope; lines.offset = fitOffset; fitted = true; }
     }
-    if (fitted)
+    // (twice more without what lies above that line by more than 0.01: the characters are the lower edge of what isn't
+    // pushed back, far pieces of the stage FF8 pushes back less lie above them; review: a two-sided trim round a line
+    // they had pulled could keep them and drop the characters)
+    for (int pass = 0; fitted && pass < 2; pass++)
     {
-        // (once again without what lies off that line by more than 0.01: far pieces of the stage FF8 pushes back less)
         double rx = 0.0, ry = 0.0, rxx = 0.0, rxy = 0.0;
         uint32_t kept = 0;
         for (uint32_t i = 0; i < samples; i++)
         {
             const float x = sampled[i].view, y = sampled[i].z;
-            if (y - slope * x > PUSHED || fabsf(y - (lines.slope * x + lines.offset)) > 0.01f) continue;
+            if (y - slope * x > PUSHED || y > lines.slope * x + lines.offset + 0.01f) continue;
             rx += x; ry += y; rxx += double(x) * x; rxy += double(x) * y;
             kept++;
         }
         const double m = double(kept), mdet = m * rxx - rx * rx;
-        if (kept >= 16 && mdet > 1e-3 * m * m)
-        {
-            const float refit = float((m * rxy - rx * ry) / mdet), refitOffset = float((ry - refit * rx) / m);
-            if (refit > 2e-6f && refit < 5e-5f) { lines.slope = refit; lines.offset = refitOffset; lines.rest = kept; }
-        }
+        if (kept < 16 || !(mdet > 1e-3 * m * m)) break;
+        const float refit = float((m * rxy - rx * ry) / mdet), refitOffset = float((ry - refit * rx) / m);
+        if (!(refit > 2e-6f && refit < 5e-5f)) break;
+        lines.slope = refit;
+        lines.offset = refitOffset;
+        lines.rest = kept;
     }
+    // the characters' farthest: beyond it, what stands above the horizon is the backdrop (the shader)
+    lines.farthest = 0.0f;
+    for (uint32_t i = 0; i < samples; i++)
+        if (sampled[i].z - slope * sampled[i].view <= PUSHED && fabsf(sampled[i].z - (lines.slope * sampled[i].view + lines.offset)) < 0.01f)
+            lines.farthest = std::max(lines.farthest, sampled[i].view);
     lines.pushed = pushed;
     lines.pushedLowest = pushedLowest;
     lines.restMost = restMost;
@@ -265,11 +273,11 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
             const float rhw = vertices[i].color.w, z = vertices[i]._.z;
             if (!(rhw > 0.0f && rhw < 0.5f) || !(z > 0.0f && z < 1.0f)) continue;   // (FFNx maps an infinite rhw to 1)
             if (samples < MOST_SAMPLES)
-                sampled[samples++] = { 1.0f / rhw, z };
+                sampled[samples++] = { 1.0f / rhw, z, vertices[i]._.x, vertices[i]._.y };
             else
             {
                 sampleSeed = sampleSeed * 1664525u + 1013904223u;
-                sampled[(sampleSeed >> 8) % MOST_SAMPLES] = { 1.0f / rhw, z };
+                sampled[(sampleSeed >> 8) % MOST_SAMPLES] = { 1.0f / rhw, z, vertices[i]._.x, vertices[i]._.y };
             }
         }
         return false;
@@ -407,7 +415,9 @@ void Renderer::ffuFF8Light()
         return;
 
     const DepthLines lines = depthLines();
-    const float stage[4] = { lines.stageSlope, lines.stageOffset, lines.stageFrom, lines.stageFrom < 1.5f ? 1.0f : 0.0f };   // (x also the slope within each triangle)
+    // (x: FF8's slope within a triangle; y: beyond the characters' farthest (and a tenth), what never meets the floor is
+    // the backdrop; z, w: the stage's depths and whether told apart, for the log)
+    const float stage[4] = { lines.stageSlope, 1.1f * lines.farthest, lines.stageFrom, lines.stageFrom < 1.5f ? 1.0f : 0.0f };
 
     // 1: the picture so far drawn lit into the pass's own target (FFNx's colour and FF8's depth read). Each of the
     // pass's views draws in order, as FFNx's own view 1 (bgfx's default mode sorts: the HUD after it would be sorted)
@@ -455,7 +465,28 @@ void Renderer::ffuFF8Light()
         const int32_t *translation = (const int32_t *)(BATTLE_VIEW_MATRIX + 0x14);
         for (int row = 0; row < 3; row++) floorData[row] = matrix[row * 3 + 1] / 4096.0f;
         floorData[3] = floorData[0] * float(translation[0]) + floorData[1] * float(translation[1]) + floorData[2] * float(translation[2]);
-        if (!(floorData[3] > 1.0f)) floorData[0] = floorData[1] = floorData[2] = floorData[3] = 0.0f;   // (the camera under the floor: none)
+        const float column = sqrtf(floorData[0] * floorData[0] + floorData[1] * floorData[1] + floorData[2] * floorData[2]);
+        if (!(floorData[3] > 1.0f) || column < 0.95f || column > 1.05f)
+            floorData[0] = floorData[1] = floorData[2] = floorData[3] = 0.0f;   // (the camera under the floor, or no rotation: none)
+    }
+    // (review: the floor checked against the characters' own vertices each frame: a stage whose floor isn't at height 0
+    // would put them under it, and the floor would take their lower bodies; more than 2% of them under it: no floor)
+    uint32_t checked = 0, under = 0;
+    for (uint32_t i = 0; floorData[3] > 0.0f && i < samples; i++)
+    {
+        const Sample &sample = sampled[i];
+        if (sample.z - lines.stageSlope * sample.view > PUSHED || fabsf(sample.z - (lines.slope * sample.view + lines.offset)) > 0.01f) continue;
+        const float rx = ((sample.x - lens[2]) / lens[0] - cam[1]) / cam[0], ry = ((sample.y - lens[3]) / lens[1] - cam[2]) / cam[0];
+        const float down = floorData[0] * rx + floorData[1] * ry + floorData[2];
+        checked++;
+        if (down > 1e-6f && sample.view > 1.05f * floorData[3] / down) under++;
+    }
+    static uint32_t refusedFrames = 0;
+    if (checked >= 16 && under * 50 > checked)
+    {
+        if (refusedFrames++ % 600 == 0)
+            ffnx_info("FFU FF8 lighting: the floor at height 0 refused (%u of %u character vertices under it): no floor\n", under, checked);
+        floorData[0] = floorData[1] = floorData[2] = floorData[3] = 0.0f;
     }
     bgfx::setUniform(uniformFloor, floorData);
     // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)

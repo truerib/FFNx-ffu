@@ -112,20 +112,6 @@ bool ffuLookSoftShadows()
     return flags >= 0 && (flags & LOOK_SOFT);
 }
 
-// The soft shadows switch (Richard's next list, item 2) in FF7's battles: FFNx's own 7x7 shadow filter steps one texel
-// of a map shadowData.w across, so the shader is told a map a third the size (its taps three times as far apart: a
-// wider, softer edge) and twice the bias (wider taps reach farther across a slope); the map itself and its view are
-// FFNx's own (Renderer::setLightingUniforms)
-void ffuLookShadowData(const float *own, float *shown)
-{
-    for (int i = 0; i < 4; i++) shown[i] = own[i];
-    if (!ff8 && ffuLookSoftShadows() && getmode_cached()->driver_mode == MODE_BATTLE && shown[3] > 3.0f)
-    {
-        shown[3] /= 3.0f;
-        shown[0] *= 2.0f;
-    }
-}
-
 // Tests: FFU_LOOK_DEBUG=<n> paints FF8's pass's own view (1 what each pixel is taken for, 2 its shadow), 0 none
 float ffuLookDebug()
 {

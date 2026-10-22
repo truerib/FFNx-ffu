@@ -103,6 +103,9 @@ float rimAt(vec2 uv, float here)
     // what lies behind it)
     vec2 g = nearSlope(uv, here);
     vec2 texel = u_ff7Contact.zw;
+    // (no rim on ground: its nearness falls away up the picture, a character's faces the camera; review: the ground's own
+    // folds and its far edge took a light line)
+    if (abs(g.y) > 0.0008 * here) return 0.0;
     float rim = 0.0;
     for (int ring = 1; ring <= 2; ring++)
         for (int k = 0; k < 8; k++)
@@ -113,8 +116,8 @@ float rimAt(vec2 uv, float here)
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
             float plane = here + g.x * o.x / texel.x + g.y * o.y / texel.y;
             float farther = (plane - nearness(at)) / here;   // (0: on the plane; 1: nothing there)
-            // (by how sideways the step lies: the ground's own folds, lines across the picture, are no character's edge)
-            rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5) * abs(cos(a)));
+            // (most where the step lies sideways, half straight up or down: a head's top keeps some)
+            rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5) * (0.5 + 0.5 * abs(cos(a))));
         }
     return rim;
 }

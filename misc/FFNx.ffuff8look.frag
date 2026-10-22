@@ -34,7 +34,7 @@ uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = off
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
 uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
 uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
-uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame); x also FF8's slope within each triangle
+uniform vec4 u_ff8Stage;   // x: FF8's slope within a triangle; y: the characters' farthest (view depth, a tenth on); z, w: the log's
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
@@ -63,7 +63,11 @@ float floorAt(vec2 uv)
 float viewDepthAt(vec2 uv, float z)
 {
     float own = (z - u_ff8Depth.y) / u_ff8Depth.x, floorDepth = floorAt(uv);
-    return floorDepth > 1.0 && floorDepth < own ? floorDepth : own;
+    if (floorDepth > 1.0 && floorDepth < own) return floorDepth;
+    // (above the horizon, what reads beyond the characters' farthest is the stage's far scenery, read on their line as
+    // nonsense: the backdrop; review)
+    if (floorDepth <= 1.0 && u_ff8Stage.y > 0.0 && own > u_ff8Stage.y) return 1e7;
+    return own;
 }
 
 // On the floor (what FF8 pushed back, read off the floor): not lit as an edge by the rim light
@@ -161,8 +165,8 @@ float rimAt(vec2 uv, float here)
             vec2 at = uv + o;
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
             float plane = here + g.x * o.x / t.x + g.y * o.y / t.y;
-            // (by how sideways the step lies: the floor's own folds, lines across the picture, are no character's edge)
-            rim = max(rim, smoothstep(0.15, 0.45, (plane - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5) * abs(cos(a)));
+            // (most where the step lies sideways, half straight up or down: a head's top keeps some)
+            rim = max(rim, smoothstep(0.15, 0.45, (plane - nearAt(at)) / here) * (ring == 1 ? 1.0 : 0.5) * (0.5 + 0.5 * abs(cos(a))));
         }
     return rim;
 }

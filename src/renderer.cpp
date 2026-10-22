@@ -225,11 +225,7 @@ void Renderer::setLightingUniforms()
     setUniform(RendererUniform::LIGHT_DIR_DATA, lightingState.lightDirData);
     setUniform(RendererUniform::LIGHT_DATA, lightingState.lightData);
     setUniform(RendererUniform::AMBIENT_LIGHT_DATA, lightingState.ambientLightData);
-    // Final Fantasy Universe: the soft shadows switch widens FF7's battle shadows' filter (ffu_look.cpp)
-    float ffuShadowData[4];
-    void ffuLookShadowData(const float *own, float *shown);
-    ffuLookShadowData(lightingState.shadowData, ffuShadowData);
-    setUniform(RendererUniform::SHADOW_DATA, ffuShadowData);
+    setUniform(RendererUniform::SHADOW_DATA, lightingState.shadowData);
     setUniform(RendererUniform::FIELD_SHADOW_DATA, lightingState.fieldShadowData);
     setUniform(RendererUniform::MATERIAL_DATA, lightingState.materialData);
     setUniform(RendererUniform::MATERIAL_SCALE_DATA, lightingState.materialScaleData);
