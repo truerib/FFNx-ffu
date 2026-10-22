@@ -329,9 +329,67 @@ bool ffuLookShown()
     return shown.load();
 }
 
+// FFU_LOOK_FRAMES=1 (dev): each second of a battle's first 20 (then every 5 s), its frames' times at the flip, and the
+// GPU's time for the last frame (bgfx's stats): where a battle's start lags (Richard 2026-10-22, "FF8s battles are very
+// laggy when they start").
+static void logBattleFrames()
+{
+    static int on = -1;
+    if (on < 0)
+    {
+        const char *value = getenv("FFU_LOOK_FRAMES");
+        on = value && value[0] == '1';
+    }
+    if (!on) return;
+    static LARGE_INTEGER frequency, last, battleFrom, secondFrom;
+    static int frames = 0, slow = 0;
+    static double worst = 0.0, total = 0.0, gpuWorst = 0.0, gpuTotal = 0.0;
+    LARGE_INTEGER now;
+    if (!frequency.QuadPart) QueryPerformanceFrequency(&frequency);
+    QueryPerformanceCounter(&now);
+    const bool battle = getmode_cached()->driver_mode == MODE_BATTLE;
+    auto ms = [&](LARGE_INTEGER a, LARGE_INTEGER b) { return double(b.QuadPart - a.QuadPart) * 1000.0 / double(frequency.QuadPart); };
+    if (!battle)
+    {
+        battleFrom.QuadPart = 0;
+        last = now;
+        return;
+    }
+    if (!battleFrom.QuadPart)
+    {
+        battleFrom = secondFrom = now;
+        frames = slow = 0;
+        worst = total = gpuWorst = gpuTotal = 0.0;
+        ffnx_info("FFU frames: a battle begins\n");
+    }
+    else
+    {
+        const double frame = ms(last, now);
+        const bgfx::Stats *stats = bgfx::getStats();
+        const double gpu = stats && stats->gpuTimerFreq > 0 ? double(stats->gpuTimeEnd - stats->gpuTimeBegin) * 1000.0 / double(stats->gpuTimerFreq) : -1.0;
+        frames++;
+        total += frame;
+        worst = std::max(worst, frame);
+        if (frame > 40.0) slow++;
+        gpuTotal += gpu;
+        gpuWorst = std::max(gpuWorst, gpu);
+        const double since = ms(battleFrom, now) / 1000.0;
+        if (ms(secondFrom, now) >= (since < 20.0 ? 1000.0 : 5000.0))
+        {
+            ffnx_info("FFU frames: %.0f s into the battle: %d frames, %.1f ms each, worst %.1f, %d over 40 ms; GPU %.1f ms each, worst %.1f\n",
+                      since, frames, total / frames, worst, slow, gpuTotal / frames, gpuWorst);
+            secondFrom = now;
+            frames = slow = 0;
+            worst = total = gpuWorst = gpuTotal = 0.0;
+        }
+    }
+    last = now;
+}
+
 // At the flip, before FFNx's lighting draws (common_flip).
 void ffuLookFrame()
 {
+    logBattleFrames();
     frameFlags.store(requestedFlags.load());
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
     impactFrame();
