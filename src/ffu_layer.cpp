@@ -111,11 +111,6 @@ namespace
     int warmedSlots = 0;
     bool slotWarm[3] = {};
 
-    bool warmWanted()
-    {
-        const BattleAsk *ask = battleAsk();
-        return ask && ask->version >= 4 && ask->warm && warmedSlots < 3 && getmode_cached()->driver_mode != MODE_BATTLE;
-    }
 
     // FFNx.ffu7.sh GameDepthAt on the CPU: the shader's mul(mul(viewport, projection), v) on FF7's row-major
     // matrices is the row vector (0, 0, w, 1) * projection * viewport.
@@ -176,6 +171,12 @@ namespace
     {
         const BattleAsk *ask = battleAsk();
         return ask && ask->on && getmode_cached()->driver_mode == MODE_BATTLE;
+    }
+
+    bool warmWanted()
+    {
+        const BattleAsk *ask = battleAsk();
+        return ask && ask->version >= 4 && ask->warm && warmedSlots < 3 && getmode_cached()->driver_mode != MODE_BATTLE;
     }
 
     bool layerWanted()
