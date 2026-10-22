@@ -14,15 +14,21 @@
 /****************************************************************************/
 
 // Final Fantasy Universe: FF8's battle lighting (src/ffu_ff8look.cpp, docs/battle-look.md "FF8 lighting"). One
-// full-screen quad, its corners already in clip space.
+// full-screen quad, its corners already in clip space; the backdrop and the sky's colour worked out here, once.
 
 $input a_position, a_texcoord0
-$output v_texcoord0
+$output v_texcoord0, v_ffu, v_ffucap
 
 #include <bgfx/bgfx_shader.sh>
+#include "FFNx.ffuff8look.sh"
 
 void main()
 {
     gl_Position = vec4(a_position.xy, 0.5, 1.0);
     v_texcoord0 = a_texcoord0;
+    // The backdrop and the sky's colour, the same for every pixel: once here (FFNx.ffuff8look.sh)
+    float backdrop = backdropDepth();
+    vec4 sky = backdrop < 1e29 ? skyColour(backdrop) : vec4_splat(0.0);
+    v_ffu = vec4(backdrop, sky.w, 0.0, 0.0);
+    v_ffucap = vec4(sky.rgb, 0.0);
 }

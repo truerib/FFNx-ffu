@@ -22,56 +22,12 @@
 // from the depth round it. The light stands in FF8's battle world, turned into the view by FF8's own camera each frame
 // (ffu_ff8look.cpp). Effect pixels (the glow's alpha mask) and the sky are left as they are; alpha is kept.
 
-$input v_texcoord0
+$input v_texcoord0, v_ffu, v_ffucap
 
 #include <bgfx/bgfx_shader.sh>
 
-SAMPLER2D(s_ff8Scene, 0);
-SAMPLER2D(s_ff8Depth, 1);
-SAMPLER2D(s_ff8Light, 2);   // the light FF8's effects added, blurred at a quarter (the glow's, the last frame's)
+#include "FFNx.ffuff8look.sh"
 
-uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = offset + scale * (of + H * X / Z))
-uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
-uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
-uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
-uniform vec4 u_ff8Stage;   // x: FF8's slope within a triangle; y: the characters' farthest (view depth, a tenth on); z, w: the log's
-uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
-uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
-uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
-uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT); w the test view (FFU_LOOK_DEBUG: 1 what each pixel is taken for, 2 its shadow)
-uniform vec4 u_ff8Shake;   // the impact's shake: xy the picture's offset (uv), z how much it is magnified (1: none)
-uniform vec4 u_ff8Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv); w the soft shadows (1: on)
-uniform vec4 u_ff8Floor;   // FF8's battle floor: view depth = w / dot(xyz, the view ray); w 0: not read this frame
-
-// The view ray through this pixel (x and y per unit of view depth), by FF8's lens
-vec2 rayAt(vec2 uv)
-{
-    vec2 s = uv * u_ff8Frame.xy + vec2(u_ff8Cam.w, 0.0);
-    return vec2(((s.x - u_ff8Lens.z) / u_ff8Lens.x - u_ff8Cam.y) / u_ff8Cam.x, ((s.y - u_ff8Lens.w) / u_ff8Lens.y - u_ff8Cam.z) / u_ff8Cam.x);
-}
-
-// The battle floor's depth along this pixel's ray (FF8's world height 0, from its camera: ffu_ff8look.cpp), or 0 where
-// the ray never meets it (above the horizon) or the camera wasn't read this frame
-float floorAt(vec2 uv)
-{
-    float down = dot(u_ff8Floor.xyz, vec3(rayAt(uv), 1.0));
-    return u_ff8Floor.w > 0.0 && down > 1e-6 ? u_ff8Floor.w / down : 0.0;
-}
-
-// The view depth here. FF8 pushes its stage back behind everything, in pieces at depth offsets of their own (they overlap
-// its characters' depths, so no depth tells them apart: 2026-10-22, builds 93-94); but nothing seen lies below the floor,
-// so a depth read on the characters' line that stands beyond the floor along this ray is the stage's: the floor's.
-float viewDepthAt(vec2 uv, float z)
-{
-    float own = (z - u_ff8Depth.y) / u_ff8Depth.x, floorDepth = floorAt(uv);
-    if (floorDepth > 1.0 && floorDepth < own) return floorDepth;
-    // (above the horizon, what reads beyond the characters' farthest is the stage's far scenery, read on their line as
-    // nonsense: the backdrop; review)
-    if (floorDepth <= 1.0 && u_ff8Stage.y > 0.0 && own > u_ff8Stage.y) return 1e7;
-    return own;
-}
-
-// On the floor (what FF8 pushed back, read off the floor): not lit as an edge by the rim light
 bool onFloor(vec2 uv, float z)
 {
     float floorDepth = floorAt(uv);
@@ -97,37 +53,6 @@ vec3 viewNear(vec2 uv, float zc, float Zc)
     if (onFloor(uv, z))
         return viewFrom(uv, viewDepthAt(uv, z));
     return viewFrom(uv, abs(z - zc) < 2e-4 && u_ff8Stage.x > 0.0 ? Zc + (z - zc) / u_ff8Stage.x : viewDepthAt(uv, z));
-}
-
-// FF8's backdrop (its sky dome, far 3D), from the picture's top: the farthest of 8 places there, and what stands within
-// 80% of it (a dome round the camera is nearer at the picture's corners, about 0.79 of its farthest).
-float backdropDepth()
-{
-    float farthest = 0.0;
-    for (int k = 0; k < 8; k++)
-    {
-        vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
-        float t = texture2D(s_ff8Depth, at).x;
-        if (t < 0.9999 && t > 0.0001) farthest = max(farthest, viewDepthAt(at, t));
-    }
-    return farthest > 0.0 ? 0.8 * farthest : 1e30;
-}
-
-bool backdropAt(vec2 uv, float z, float backdrop)
-{
-    return z >= 0.9999 || z <= 0.0001 || viewDepthAt(uv, z) >= backdrop;
-}
-
-// The sky's colour: the backdrop near the picture's top (8 places); w how many were the backdrop (outdoors).
-vec4 skyColour(float backdrop)
-{
-    vec4 sum = vec4_splat(0.0);
-    for (int k = 0; k < 8; k++)
-    {
-        vec2 at = vec2((float(k) + 0.5) / 8.0, k < 4 ? 0.06 : 0.18);
-        if (backdropAt(at, texture2D(s_ff8Depth, at).x, backdrop)) sum += vec4(texture2D(s_ff8Scene, at).rgb, 1.0);
-    }
-    return sum.w > 0.0 ? vec4(sum.rgb / sum.w, sum.w) : sum;
 }
 
 // The spells' light round this pixel (as FF7's pass: FFNx.ffuff7look.frag): the effects' light, blurred wide.
@@ -158,11 +83,13 @@ float rimAt(vec2 uv, float here)
     float py = nearAt(uv + vec2(0.0, t.y)), ny = nearAt(uv - vec2(0.0, t.y));
     vec2 g = vec2(abs(px - here) < abs(here - nx) ? px - here : here - nx, abs(py - here) < abs(here - ny) ? py - here : here - ny);
     float rim = 0.0;
-    for (int ring = 1; ring <= 2; ring++)
+    // (one ring, at three quarters of the reach and full weight: two rings, at half and the whole reach, the second at
+    // half weight, cost 8 more fetches a pixel; FF8 ran at 23 a second with every switch on)
+    for (int ring = 1; ring <= 1; ring++)
         for (int k = 0; k < 8; k++)
         {
             float a = float(k) * 0.785398 + 0.39 * float(ring);
-            vec2 o = vec2(cos(a), sin(a)) * u_ff8Rim.yz * (float(ring) * 0.5);
+            vec2 o = vec2(cos(a), sin(a)) * u_ff8Rim.yz * 0.75;
             vec2 at = uv + o;
             if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
             float plane = here + g.x * o.x / t.x + g.y * o.y / t.y;
@@ -190,7 +117,7 @@ void main()
         return;
     }
     float z = texture2D(s_ff8Depth, uv).x;
-    float backdrop = backdropDepth();
+    float backdrop = v_ffu.x;   // (the vertex shader's: FFNx.ffuff8look.sh)
     if (u_ff8Haze.w > 0.5 && u_ff8Haze.w < 1.5)
     {
         // (the test view: blue nothing drawn (far), magenta nothing (near), red the backdrop, green the floor (what FF8
@@ -210,7 +137,10 @@ void main()
     vec3 p = viewAt(uv);
     vec3 shaded = scene.rgb;   // (the haze alone: FF8's own colour)
     float shadowSeen = 1.0;   // (the shadow view)
-    if (u_ff8Depth.w > 0.5)
+    // (the battle and its ground, faded out from twice to three times the depth its 3D stands at: FF8's far scenery
+    // keeps its own light, as its pieces stand on lines of their own; beyond that nothing of the lighting is worked out)
+    float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
+    if (u_ff8Depth.w > 0.5 && onStage > 0.0)
     {
         // (two texels across: one step of FF8's stage depth is 10-20 units of view depth, a floor's pixel about as much)
         vec3 px = viewNear(uv + vec2(2.0 * t.x, 0.0), z, p.z), nx = viewNear(uv - vec2(2.0 * t.x, 0.0), z, p.z);
@@ -236,14 +166,22 @@ void main()
             if (r >= rays) break;
             vec3 lr = rays > 1 ? normalize(l + across * (float(r) - 1.0) * 0.14) : l;
             float rayShadow = 0.0;
+            // (the first hit is the ray's strongest, 1 - k/17 falling with k, so the ray ends there; the soft shadows' two
+            // side rays take every other step, the same reach: FF8 ran at 23 a second with every switch on)
+            int stride = rays > 1 && r != 1 ? 2 : 1;
             for (int k = 1; k <= 16; k++)
             {
+                if (k - (k / stride) * stride != 0) continue;
                 vec3 q = start + lr * (float(k) * 0.0035 * p.z);
                 vec2 quv = uvAt(q);
                 if (q.z <= 1.0 || quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
                 float there = viewAt(quv).z;
                 float ahead = q.z - there;
-                if (ahead > 0.002 * q.z && ahead < 0.06 * q.z) rayShadow = max(rayShadow, 1.0 - float(k) / 17.0);
+                if (ahead > 0.002 * q.z && ahead < 0.06 * q.z)
+                {
+                    rayShadow = 1.0 - float(k) / 17.0;
+                    break;
+                }
             }
             shadow += rayShadow / float(rays);
         }
@@ -267,14 +205,10 @@ void main()
         float contact = 1.0 - u_ff8Look.w * occlusion / 8.0;
 
         float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
-        // (the battle and its ground, faded out from twice to three times the depth its 3D stands at: FF8's far scenery
-        // keeps its own light, as its pieces stand on lines of their own)
-        float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
         shaded = scene.rgb * pow(max(vec3_splat(mix(1.0, light, onStage)), vec3_splat(1e-4)), vec3_splat(0.4545));
     }
     float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
-    float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
-    if (u_ff8Rim.x > 0.0 && !onFloor(uv, z))
+    if (u_ff8Rim.x > 0.0 && onStage > 0.0 && !onFloor(uv, z))
     {
         // (the rim light: a light edge, a factor on the pixel's own colour and a touch of light, the battle only)
         float rim = rimAt(uv, 1.0 / max(p.z, 1.0)) * u_ff8Rim.x * onStage;
@@ -282,12 +216,12 @@ void main()
     }
     // The spells' light: what stands round an effect takes its light, as a factor on its own colour (the battle and its
     // ground: faded out beyond them as the lighting is)
-    if (u_ff8Spell.x > 0.0)
+    if (u_ff8Spell.x > 0.0 && onStage > 0.0)
         shaded += shaded * (vec3_splat(1.0) - exp(-spellLight(uv) * u_ff8Spell.x)) * onStage;   // (soft: at most twice)
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {
-        vec4 sky = skyColour(backdrop);
+        vec4 sky = vec4(v_ffucap.rgb, v_ffu.y);
         float outdoors = smoothstep(1.6, 2.4, backdrop / max(u_ff8Haze.x, 1.0));   // (as FF7's: no step as cameras move)
         if (sky.w >= 2.0 && backdrop > u_ff8Haze.x)
             shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
