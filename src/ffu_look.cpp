@@ -166,8 +166,6 @@ bool ffuLookShown()
 void ffuLookFrame()
 {
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
-    if (getmode_cached()->driver_mode != MODE_BATTLE)
-        newRenderer.ffuGlowPrepare();   // (the glow's copy made outside battles: Rules 59, 89)
     ffuSurveyFrame();
     ffuFF8LookFrame();
     ffuFF7LookFrame();

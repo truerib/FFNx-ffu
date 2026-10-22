@@ -14,7 +14,9 @@
 /****************************************************************************/
 
 // Final Fantasy Universe: the battle look's glow (docs/battle-look.md "Glow"), FF7's and FF8's battles alike: only the
-// game's own effects glow, as in FF9's (mods/ff9-globe BattleGlow.cs).
+// game's own effects glow, as in FF9's (mods/ff9-globe BattleGlow.cs): what they add. While a battle's glow keeps its mask,
+// FFNx.frag and FFNx.lighting.frag write the light an adding draw adds as its alpha (ADD, and 25P premultiplied), so a
+// sprite's dark or clear texels glow nothing (Richard 2026-10-22: "boxes around every effect").
 //
 // While a battle is shown (not while a hidden battle draws into the live layer), every draw into FFNx's frame keeps
 // its colour exactly and only its alpha changes: additive draws (the games' effects: PlayStation abr 1 and 3) add their
@@ -59,12 +61,6 @@ namespace
     uint16_t sharpWidth = 0, sharpHeight = 0;
     uint16_t halfWidth = 0, halfHeight = 0;
     bool built = false;   // this frame's glow is in halves[0] and quarters[0]
-    // The picture just before the frame's first effect (its first additive draw): the glow is what the effects added to
-    // it, so an effect sprite's black or clear texels, which add nothing, glow nothing (Richard 2026-10-22: "boxes around
-    // every effect": the glow had taken the picture's own brightness wherever an effect's quad covered it).
-    bgfx::TextureHandle before = BGFX_INVALID_HANDLE;
-    uint16_t beforeWidth = 0, beforeHeight = 0;
-    bool beforeTaken = false;
 
     struct QuadVertex { float x, y, z, u, v; };
 
@@ -146,46 +142,10 @@ bool Renderer::ffuGlowReady()
     return programState > 0;
 }
 
-// The copy the glow subtracts, at the frame's size (outside battles: ffuLookFrame; Rules 59, 89).
-void Renderer::ffuGlowPrepare()
-{
-    if (internalState.bIsHDR || enable_antialiasing > 0 || !ffuGlowReady())
-        return;
-    if (bgfx::isValid(before) && beforeWidth == framebufferWidth && beforeHeight == framebufferHeight)
-        return;
-    if (bgfx::isValid(before)) bgfx::destroy(before);
-    before = bgfx::createTexture2D(framebufferWidth, framebufferHeight, false, 1, bgfx::TextureFormat::RGBA16,
-        BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-    beforeWidth = framebufferWidth;
-    beforeHeight = framebufferHeight;
-    ffnx_info("FFU glow: copy for the effects made (%ux%u)\n", beforeWidth, beforeHeight);
-}
-
-// gl_draw_indexed_primitive, before a battle draw that adds (the effects): the first of the frame copies the picture so
-// far, in views of FFNx's own count (the copy falls between its draws).
-void Renderer::ffuGlowBeforeEffect()
-{
-    if (beforeTaken || enable_antialiasing > 0 || backendViewId > 240 || !ffuGlowWanted() || !ffuGlowReady())
-        return;
-    ffuGlowPrepare();
-    if (!bgfx::isValid(before))
-        return;
-    ++backendViewId;
-    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
-    bgfx::blit(backendViewId, {.handle = before}, {.handle = backendFrameBufferRT[0], .x = 0, .y = 0, .width = framebufferWidth, .height = framebufferHeight});
-    bgfx::touch(backendViewId);
-    ++backendViewId;   // FFNx carries on (the effect) in a view of its own, after the copy
-    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
-    bgfx::touch(backendViewId);
-    beforeTaken = true;
-}
-
 // This draw goes into FFNx's frame while a battle is shown (Renderer::draw, its backend frame buffer branch).
 bool Renderer::ffuGlowWanted()
 {
-    return ffuLookGlow() && ffuLookShown() && !internalState.bIsHDR && getmode_cached()->driver_mode == MODE_BATTLE
+    return ffuLookGlow() && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
         && !ffuLayerActive && !ffuBattleLayerFrame && programState >= 0;
 }
 
@@ -204,7 +164,7 @@ uint64_t Renderer::ffuGlowState(uint64_t state)
         case RendererBlendMode::BLEND_AVG: rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_INV_SRC_ALPHA; break;
         case RendererBlendMode::BLEND_ADD: rgbDst = BGFX_STATE_BLEND_ONE; break;
         case RendererBlendMode::BLEND_SUB: rgbDst = BGFX_STATE_BLEND_ONE; rgbEquation = BGFX_STATE_BLEND_EQUATION_REVSUB; break;
-        case RendererBlendMode::BLEND_25P: rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_ONE; break;
+        case RendererBlendMode::BLEND_25P: rgbDst = BGFX_STATE_BLEND_ONE; break;   // (premultiplied by FFNx.frag while the mask is kept)
         case RendererBlendMode::BLEND_NONE:
             if (internalState.bIsExternalTexture && !ff8) { rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_INV_SRC_ALPHA; }
             break;
@@ -226,8 +186,8 @@ uint64_t Renderer::ffuGlowState(uint64_t state)
     case RendererBlendMode::BLEND_SUB:
         rgbDst = BGFX_STATE_BLEND_ONE; rgbEquation = BGFX_STATE_BLEND_EQUATION_REVSUB; aDst = BGFX_STATE_BLEND_ONE;
         break;
-    case RendererBlendMode::BLEND_25P:
-        rgbSrc = BGFX_STATE_BLEND_SRC_ALPHA; rgbDst = BGFX_STATE_BLEND_ONE; aSrc = BGFX_STATE_BLEND_SRC_ALPHA; aDst = BGFX_STATE_BLEND_ONE;
+    case RendererBlendMode::BLEND_25P:   // (FFNx.frag premultiplies it and writes the light it adds as alpha, while the mask is kept)
+        rgbDst = BGFX_STATE_BLEND_ONE; aSrc = BGFX_STATE_BLEND_ONE; aDst = BGFX_STATE_BLEND_ONE;
         break;
     case RendererBlendMode::BLEND_NONE:
         if (internalState.bIsExternalTexture && !ff8)
@@ -280,16 +240,15 @@ bgfx::TextureHandle Renderer::ffuSharpen(bgfx::TextureHandle frame, uint16_t fra
 void Renderer::ffuGlowBuild(bgfx::TextureHandle frame, uint16_t frameWidth, uint16_t frameHeight)
 {
     built = false;
-    const bool drawn = ffuGlowFrame, effects = beforeTaken;
+    const bool drawn = ffuGlowFrame;
     ffuGlowFrame = false;
-    beforeTaken = false;
-    if (!drawn || !effects || !bgfx::isValid(before) || !ffuGlowWanted() || !ffuGlowReady())
-        return;   // (no effect drew this frame: nothing glows)
+    if (!drawn || !ffuGlowWanted() || !ffuGlowReady())
+        return;
     targets(frameWidth, frameHeight);
     const uint16_t qw = std::max<uint16_t>(halfWidth / 2, 1), qh = std::max<uint16_t>(halfHeight / 2, 1);
     bgfx::TextureHandle none = BGFX_INVALID_HANDLE;
     bgfx::ViewId view = FIRST_VIEW;
-    bool ok = pass(view++, halves[0], halfWidth, halfHeight, 0.0f, 0.0f, 0.0f, frame, before)
+    bool ok = pass(view++, halves[0], halfWidth, halfHeight, 0.0f, 0.0f, 0.0f, frame, none)
         && pass(view++, halves[1], halfWidth, halfHeight, 1.0f, 1.0f / halfWidth, 0.0f, bgfx::getTexture(halves[0]), none)
         && pass(view++, halves[0], halfWidth, halfHeight, 1.0f, 0.0f, 1.0f / halfHeight, bgfx::getTexture(halves[1]), none)
         && pass(view++, quarters[0], qw, qh, 1.0f, 0.0f, 0.0f, bgfx::getTexture(halves[0]), none)   // (a plain copy down)
