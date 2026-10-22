@@ -746,6 +746,15 @@ extern "C" __declspec(dllexport) void ffu_guest_layer_place(const char *game, co
 
 // From gl_draw_indexed_primitive, before each draw of a battle frame: true at the frame's first flat draw after its 3D
 // (FF7's 3D draws aren't screen-space; FF8's are, with a depth), when the guests' layers go in first.
+// gl.cpp, each draw: FF8 drawing only its effects for a host's battle (its bridge's request on: ffu_ff8_battle_layer) keeps
+// its flat draws out of the frame (its HUD row, damage numbers and target hand leaked into the host's battle, 2026-10-22).
+bool ffuLayerDropsFlat()
+{
+    if (!ff8 || getmode_cached()->driver_mode != MODE_BATTLE) return false;
+    const BattleAsk *ask = battleAsk();
+    return ask && ask->on;
+}
+
 bool ffuGuestLayersDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t vertexcount)
 {
     if (guestLaid || getmode_cached()->driver_mode != MODE_BATTLE) return false;
