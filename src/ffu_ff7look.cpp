@@ -46,6 +46,7 @@ bool ffuLookAtmosphere();   // ffu_look.cpp
 bool ffuLookCinema();
 bool ffuLookLighting();
 bool ffuLookSpell();
+bool ffuLookRim();
 bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 bool ffuLookShown();
 float ffuLookLevel(int which);
@@ -62,12 +63,15 @@ namespace
     // tenth of the picture wide at a sixteenth of it by ffu_glow.cpp, the last frame's), multiplied into what stands
     // round it: its strength at the slider's 1
     constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
+    // The rim light (Richard's next list, item 2): a light edge on what stands well in front of what is behind it (a
+    // character against the far ground or sky), its strength and how far in from the edge it reaches (across the picture)
+    constexpr float RIM = 1.0f, RIM_REACH = 0.004f;
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE, uniformSplit = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle uniformContact = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformContact = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE, samplerLight = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
@@ -195,6 +199,7 @@ bool Renderer::ffuFF7Ready()
     uniformSplit = bgfx::createUniform("u_ff7Split", bgfx::UniformType::Vec4);
     uniformContact = bgfx::createUniform("u_ff7Contact", bgfx::UniformType::Vec4);
     uniformSpell = bgfx::createUniform("u_ff7Spell", bgfx::UniformType::Vec4);
+    uniformRim = bgfx::createUniform("u_ff7Rim", bgfx::UniformType::Vec4);
     samplerLight = bgfx::createUniform("s_ff7Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff7Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff7Depth", bgfx::UniformType::Sampler);
@@ -227,7 +232,7 @@ void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 240 || !ffuFF7Ready())
         return;
     ffuFF7Prepare();
@@ -256,7 +261,8 @@ void Renderer::ffuFF7Pass()
     const float contact = ffuLookLighting() && stage > 1.0f ? std::min(CONTACT * ffuLookLevel(2), 1.0f) : 0.0f;   // (its fade needs the stage's size)
     const bgfx::TextureHandle light = ffuGlowLight();
     const float spell = ffuLookSpell() && stage > 1.0f && bgfx::isValid(light) ? SPELL * ffuLookLevel(5) : 0.0f;
-    if (!haze && barsAt <= 0.0f && contact <= 0.0f && spell <= 0.0f)
+    const float rim = ffuLookRim() && stage > 1.0f ? RIM : 0.0f;   // (its fade needs the stage's size)
+    if (!haze && barsAt <= 0.0f && contact <= 0.0f && spell <= 0.0f && rim <= 0.0f)
         return;
     const float aspect = float(framebufferWidth) / float(std::max<uint16_t>(framebufferHeight, 1));
     const float barHeight = std::max(0.0f, (1.0f - aspect / CINEMA_ASPECT) * 0.5f) * barsAt;
@@ -279,6 +285,8 @@ void Renderer::ffuFF7Pass()
     bgfx::setUniform(uniformContact, contactData);
     const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * aspect, 0.0f };   // (round on the screen)
     bgfx::setUniform(uniformSpell, spellData);
+    const float rimData[4] = { rim, RIM_REACH, RIM_REACH * aspect, 0.0f };   // (round on the screen)
+    bgfx::setUniform(uniformRim, rimData);
     // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
     bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);

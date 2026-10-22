@@ -41,6 +41,8 @@ namespace
     constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8, LOOK_ATMOSPHERE = 16, LOOK_CINEMA = 32;
     // (the spells' light, Richard's next list item 1: off unless told, unlike the rest, so an older bridge never turns it on)
     constexpr int LOOK_SPELL = 64;
+    // (Richard's next list, item 2: rim light and softer shadows; off unless told, as the spells' light)
+    constexpr int LOOK_RIM = 128, LOOK_SOFT = 256;
     std::atomic<float> spellLevel{1.0f};   // its slider (ffu_look_spell)
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
@@ -96,6 +98,25 @@ bool ffuLookSpell()
 {
     int flags = frameFlags.load();
     return flags >= 0 && (flags & LOOK_SPELL);
+}
+
+bool ffuLookRim()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_RIM);
+}
+
+bool ffuLookSoftShadows()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_SOFT);
+}
+
+// Tests: FFU_LOOK_DEBUG=<n> paints FF8's pass's own view (1 what each pixel is taken for, 2 its shadow), 0 none
+float ffuLookDebug()
+{
+    static const float view = [] { const char *value = getenv("FFU_LOOK_DEBUG"); return value ? float(atoi(value)) : 0.0f; }();
+    return view;
 }
 
 // The sliders: 0 the main light, 1 the light from all around, 2 contact, 3 the glow, 4 the haze, 5 the spells' light.

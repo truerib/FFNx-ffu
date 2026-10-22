@@ -31,6 +31,7 @@ SAMPLER2D(s_ff7Light, 2);   // the light FF7's effects added, blurred at a quart
 uniform vec4 u_ff7Depth;   // FF7's depth along the view axis: (z x + y) / (z z' + w), the rows FFNx drew its 3D with
 uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (0: none), z the bars' height (uv), w the mask
 uniform vec4 u_ff7Split;   // x: the test split (FFU_LOOK_SPLIT): FF7's own left of it
+uniform vec4 u_ff7Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv)
 uniform vec4 u_ff7Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its ring's radius (uv across); zw one texel (uv)
 
@@ -86,6 +87,24 @@ vec3 spellLight(vec2 uv)
         + texture2D(s_ff7Light, uv + vec2(0.0, o.y)).rgb + texture2D(s_ff7Light, uv - vec2(0.0, o.y)).rgb) / 6.0;
 }
 
+// The rim light here: how strongly this pixel stands at the edge of something well in front of what lies behind it (8
+// directions, two distances: full at the edge, half a reach in), 0 within a surface or where the step behind is small
+// (a character's feet on the floor), 1 at a character against the far ground or the sky (nothing drawn: farthest).
+float rimAt(vec2 uv, float here)
+{
+    float rim = 0.0;
+    for (int ring = 1; ring <= 2; ring++)
+        for (int k = 0; k < 8; k++)
+        {
+            float a = float(k) * 0.785398 + 0.39 * float(ring);
+            vec2 at = uv + vec2(cos(a), sin(a)) * u_ff7Rim.yz * (float(ring) * 0.5);
+            if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) continue;
+            float farther = (here - nearness(at)) / here;   // (0: as near; 1: nothing there)
+            rim = max(rim, smoothstep(0.15, 0.45, farther) * (ring == 1 ? 1.0 : 0.5));
+        }
+    return rim;
+}
+
 void main()
 {
     vec2 uv = v_texcoord0;
@@ -105,6 +124,14 @@ void main()
         float here = nearness(uv);
         float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
         if (onStage > 0.0) shown *= mix(1.0, contactAt(uv, here), onStage * (1.0 - effect));
+    }
+    if (u_ff7Rim.x > 0.0 && d < 0.9999 && d > 0.0001)
+    {
+        // (a light edge, as a factor on the pixel's own colour and a touch of light, on the stage only)
+        float here = nearness(uv);
+        float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
+        float rim = rimAt(uv, here) * u_ff7Rim.x * onStage * (1.0 - effect);
+        shown += rim * (shown * 0.6 + vec3_splat(0.04));
     }
     if (u_ff7Spell.x > 0.0 && d < 0.9999 && d > 0.0001)
     {
