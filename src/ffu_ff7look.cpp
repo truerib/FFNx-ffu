@@ -49,6 +49,8 @@ bool ffuLookSpell();
 bool ffuLookRim();
 bool ffuLookShaking();
 void ffuLookShake(float shake[4]);
+bool ffuLookDof();
+bool ffuLookMotion();
 bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 bool ffuLookShown();
 float ffuLookLevel(int which);
@@ -68,6 +70,10 @@ namespace
     // The rim light (Richard's next list, item 2): a light edge on what stands well in front of what is behind it (a
     // character against the far ground or sky), its strength and how far in from the edge it reaches (across the picture)
     constexpr float RIM = 1.0f, RIM_REACH = 0.006f;   // (0.004, and half the light, hardly showed)
+    // The cinematics (Richard's next list, item 3): while a summon or Limit plays, depth of field (the blur at infinity and
+    // its most, shares of the picture's width) and motion blur (its share of a frame's move, and its most); a frame whose
+    // camera jumped further than CUT (clip units at what it looks at) is a cut, never blurred
+    constexpr float DOF_APERTURE = 0.007f, DOF_MOST = 0.01f, MOTION_SHARE = 1.0f, MOTION_MOST = 0.04f, CUT = 0.3f;
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
@@ -79,11 +85,26 @@ namespace
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
     uint16_t targetWidth = 0, targetHeight = 0;
-    bgfx::ViewId targetView = 0;
+    bgfx::ViewId targetViews[4] = {};   // the views that drew into the target last (unbound before it is made again)
     bool seen3D = false, passedThisFrame = false;
     float bars = 0.0f, barsHold = 0.0f;   // the bars' weight 0-1 and the time they are held after a cinematic
     ULONGLONG lastTick = 0;
     uint32_t passes = 0;
+
+    // The cinematics' program (FFNx.ffucine: optional, the look works without it) and its state
+    int cineState = 0;   // 0 not tried, 1 ready, -1 unavailable
+    bgfx::ProgramHandle cineProgram = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle cineReproject = BGFX_INVALID_HANDLE, cineDepth = BGFX_INVALID_HANDLE, cineFocus = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle cineFrame = BGFX_INVALID_HANDLE, cineShake = BGFX_INVALID_HANDLE, cineMotion = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle cineScene = BGFX_INVALID_HANDLE, cineDepthMap = BGFX_INVALID_HANDLE;
+    float cine = 0.0f, cineHold = 0.0f;   // the cinematics' weight 0-1 and the time held after one (as the bars)
+    ULONGLONG cineTick = 0;
+    // The last battle frame's camera (FF7's view matrix, FFNx's view x projection x viewport) and the frames counted, for
+    // the motion; and the last move, kept for a repeated frame (FF7's battles at 30 a second drawn at 60)
+    uint32_t battleFrames = 0, lastFrame = 0, lastMove = 0;
+    bool lastValid = false, moveValid = false;
+    float lastView[16], lastClip[16], lastReproject[16];
+    float middleMove[2] = {};   // the last move of what the camera looks at, in clip units (the log's)
 
     struct QuadVertex { float x, y, z, u, v; };
 
@@ -128,6 +149,19 @@ namespace
         bars = wanted ? std::min(bars + dt / 0.45f, 1.0f) : std::max(bars - dt / 0.6f, 0.0f);
         return bars * bars * (3.0f - 2.0f * bars);
     }
+}
+
+// The cinematics' weight this frame (item 3): eased in over 0.45 s while a summon or Limit plays with depth of field or
+// motion blur on, held 1 s after, out over 0.6 s, as the bars.
+static float cineWeight()
+{
+    const ULONGLONG nowTick = GetTickCount64();
+    const float dt = cineTick ? std::min(float(nowTick - cineTick) / 1000.0f, 0.1f) : 0.0f;
+    cineTick = nowTick;
+    const bool playing = (ffuLookDof() || ffuLookMotion()) && cinematicPlaying();
+    cineHold = playing ? 1.0f : std::max(cineHold - dt, 0.0f);
+    cine = playing || cineHold > 0.0f ? std::min(cine + dt / 0.45f, 1.0f) : std::max(cine - dt / 0.6f, 0.0f);
+    return cine * cine * (3.0f - 2.0f * cine);
 }
 
 // FF7 plays a summon or a Limit now (the impact's hard shake as one begins: ffu_look.cpp)
@@ -176,6 +210,8 @@ void ffuFF7LookFrame()
     {
         newRenderer.ffuFF7Prepare();
         bars = barsHold = 0.0f;
+        cine = cineHold = 0.0f;
+        lastValid = moveValid = false;
     }
 }
 
@@ -186,6 +222,7 @@ void ffuFF7LookFrameEnd()
     if (ff8) return;
     if (!passedThisFrame && seen3D && getmode_cached()->driver_mode == MODE_BATTLE && ffuLookShown())
         newRenderer.ffuFF7Pass();
+    if (getmode_cached()->driver_mode == MODE_BATTLE) battleFrames++;
     seen3D = passedThisFrame = false;
 }
 
@@ -216,6 +253,25 @@ bool Renderer::ffuFF7Ready()
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
     programState = bgfx::isValid(program) ? 1 : -1;
     ffnx_info("FFU FF7 haze: %s\n", programState > 0 ? "ready" : "its program failed");
+    // The cinematics' program (its own shaders: an older install without them keeps the rest of the look)
+    const char *cineVertex = "shaders/FFNx.ffucine.flat.vk.vert", *cineFragment = "shaders/FFNx.ffucine.flat.vk.frag";
+    _snprintf(vertexPath, sizeof(vertexPath), "%s/%s", basedir, cineVertex);
+    _snprintf(fragmentPath, sizeof(fragmentPath), "%s/%s", basedir, cineFragment);
+    cineState = -1;
+    if (programState > 0 && fileExists(vertexPath) && fileExists(fragmentPath))
+    {
+        cineProgram = bgfx::createProgram(getShader(cineVertex), getShader(cineFragment), true);
+        cineReproject = bgfx::createUniform("u_cineReproject", bgfx::UniformType::Mat4);
+        cineDepth = bgfx::createUniform("u_cineDepth", bgfx::UniformType::Vec4);
+        cineFocus = bgfx::createUniform("u_cineFocus", bgfx::UniformType::Vec4);
+        cineFrame = bgfx::createUniform("u_cineFrame", bgfx::UniformType::Vec4);
+        cineShake = bgfx::createUniform("u_cineShake", bgfx::UniformType::Vec4);
+        cineMotion = bgfx::createUniform("u_cineMotion", bgfx::UniformType::Vec4);
+        cineScene = bgfx::createUniform("s_cineScene", bgfx::UniformType::Sampler);
+        cineDepthMap = bgfx::createUniform("s_cineDepth", bgfx::UniformType::Sampler);
+        cineState = bgfx::isValid(cineProgram) ? 1 : -1;
+    }
+    ffnx_info("FFU FF7 cinematics: %s\n", cineState > 0 ? "ready" : "unavailable (needs FFNx.ffucine's shaders)");
     return programState > 0;
 }
 
@@ -227,7 +283,8 @@ void Renderer::ffuFF7Prepare()
         return;
     if (bgfx::isValid(target))
     {
-        if (targetView) bgfx::setViewFrameBuffer(targetView, BGFX_INVALID_HANDLE);
+        for (bgfx::ViewId &view : targetViews)
+            if (view) { bgfx::setViewFrameBuffer(view, BGFX_INVALID_HANDLE); view = 0; }
         bgfx::destroy(target);
     }
     target = bgfx::createFrameBuffer(framebufferWidth, framebufferHeight, bgfx::TextureFormat::RGBA16,
@@ -237,16 +294,82 @@ void Renderer::ffuFF7Prepare()
     ffnx_info("FFU FF7 haze: target made (%ux%u)\n", targetWidth, targetHeight);
 }
 
+// The camera's move since the last battle frame, for the cinematics' motion blur: out maps this frame's (x, y, depth, 1)
+// on the screen (row vectors, as FFNx.vert) to the last frame's clip, through FF7's view matrix (FFNx's, from FF7's
+// camera: world to view) and FFNx's view x projection x viewport (n) of each frame. False on a battle's first frame, after
+// a gap, at a cut (what the camera looks at jumped further than CUT), and when the camera didn't move (a repeated frame
+// takes the last move once: FF7's battles at 30 a second drawn at 60).
+// The view depth of what FF7's battle camera looks at (its focal point through FF7's view matrix), 0 unknown.
+static float focalDepth(const float *view)
+{
+    if (!ff7_externals.g_battle_camera_focal_point) return 0.0f;
+    const float point[4] = { float(ff7_externals.g_battle_camera_focal_point->x), float(ff7_externals.g_battle_camera_focal_point->y),
+        float(ff7_externals.g_battle_camera_focal_point->z), 1.0f };
+    float inView[4];
+    bx::vec4MulMtx(inView, point, view);
+    return inView[2] > 1.0f ? inView[2] : 0.0f;
+}
+
+static bool cineMotionThisFrame(const float n[4][4], const float *viewNow, bool viewSet, float out[16])
+{
+    if (!(ffuLookMotion() || ffuLookDof()) || !viewSet)
+    {
+        lastValid = moveValid = false;
+        return false;
+    }
+    float clipNow[16];
+    memcpy(clipNow, n, sizeof(clipNow));
+    const bool continuous = lastValid && lastFrame + 1 == battleFrames;
+    const bool same = continuous && memcmp(viewNow, lastView, sizeof(lastView)) == 0 && memcmp(clipNow, lastClip, sizeof(lastClip)) == 0;
+    bool moved = false;
+    if (continuous && !same)
+    {
+        float unclip[16], unview[16], back[16], step[16];
+        bx::mtxInverse(unclip, clipNow);
+        bx::mtxInverse(unview, viewNow);
+        bx::mtxMul(back, unclip, unview);      // the screen to the world (this frame)
+        bx::mtxMul(step, back, lastView);      // to the last frame's view
+        bx::mtxMul(out, step, lastClip);       // to its clip
+        // (a cut: the middle of the picture, at what the camera looks at, came from far off the last frame's)
+        const float focus = focalDepth(viewNow);
+        const float z = focus > 0.0f ? focus : 1000.0f;
+        const float depth = (z * n[2][2] + n[3][2]) / (z * n[2][3] + n[3][3]);
+        const float middle[4] = { 0.0f, 0.0f, depth, 1.0f };
+        float then[4];
+        bx::vec4MulMtx(then, middle, out);
+        moved = then[3] > 0.0f && fabsf(then[0] / then[3]) < CUT && fabsf(then[1] / then[3]) < CUT;
+        middleMove[0] = then[3] > 0.0f ? then[0] / then[3] : 99.0f;
+        middleMove[1] = then[3] > 0.0f ? then[1] / then[3] : 99.0f;
+        if (moved)
+        {
+            memcpy(lastReproject, out, sizeof(lastReproject));
+            lastMove = battleFrames;
+        }
+        moveValid = moved;
+    }
+    else if (same && moveValid && lastMove + 1 == battleFrames)
+    {
+        memcpy(out, lastReproject, sizeof(lastReproject));
+        moved = true;
+        moveValid = false;   // (once)
+    }
+    memcpy(lastView, viewNow, sizeof(lastView));
+    memcpy(lastClip, clipNow, sizeof(lastClip));
+    lastFrame = battleFrames;
+    lastValid = true;
+    return moved;
+}
+
 // The pass (just before FF7 clears its depth for its menus, or at the frame's end).
 void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking() && !ffuLookDof() && !ffuLookMotion()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 240 || !ffuFF7Ready())
         return;
     ffuFF7Prepare();
-    if (!bgfx::isValid(target) || bgfx::getAvailTransientVertexBuffer(6, quadLayout) < 6)
+    if (!bgfx::isValid(target) || bgfx::getAvailTransientVertexBuffer(24, quadLayout) < 24)
         return;
 
     // FF7's view depth from its depth: clip = (view x projection x viewport) as FFNx draws its 3D (row vectors, D3D),
@@ -273,7 +396,13 @@ void Renderer::ffuFF7Pass()
     const float spell = ffuLookSpell() && stage > 1.0f && bgfx::isValid(light) ? SPELL * ffuLookLevel(5) : 0.0f;
     const float rim = ffuLookRim() && stage > 1.0f ? RIM : 0.0f;   // (its fade needs the stage's size)
     const bool shaking = ffuLookShaking();
-    if (!haze && barsAt <= 0.0f && contact <= 0.0f && spell <= 0.0f && rim <= 0.0f && !shaking)
+    const float cineAt = cineState > 0 ? cineWeight() : 0.0f;
+    float reproject[16];
+    const bool moved = cineMotionThisFrame(n, internalState.viewMatrix, internalState.isViewMatrixSet, reproject);   // (kept every frame with a cinematics switch on)
+    const float dof = ffuLookDof() && cineAt > 0.0f ? DOF_APERTURE * cineAt : 0.0f;
+    const bool motion = ffuLookMotion() && cineAt > 0.0f && moved;
+    const bool look = haze || barsAt > 0.0f || contact > 0.0f || spell > 0.0f || rim > 0.0f || shaking;
+    if (!look && dof <= 0.0f && !motion)
         return;
     const float aspect = float(framebufferWidth) / float(std::max<uint16_t>(framebufferHeight, 1));
     const float barHeight = std::max(0.0f, (1.0f - aspect / CINEMA_ASPECT) * 0.5f) * barsAt;
@@ -281,46 +410,89 @@ void Renderer::ffuFF7Pass()
     const float depthRows[4] = { n[2][2], n[3][2], n[2][3], n[3][3] };
     const float hazeData[4] = { HAZE_START * stage, hazeMost, barHeight, ffuGlowWanted() ? 1.0f : 0.0f };
 
-    ++backendViewId;
-    targetView = backendViewId;
-    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
-    bgfx::setViewFrameBuffer(backendViewId, target);
-    bgfx::setViewRect(backendViewId, 0, 0, framebufferWidth, framebufferHeight);
-    bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
-    bgfx::setViewTransform(backendViewId, nullptr, nullptr);
-    bgfx::setUniform(uniformDepth, depthRows);
-    bgfx::setUniform(uniformHaze, hazeData);
-    const float split[4] = { ffuLookSplit(), 0.0f, 0.0f, 0.0f };
-    bgfx::setUniform(uniformSplit, split);
-    const float contactData[4] = { contact, CONTACT_RING, 1.0f / float(framebufferWidth), 1.0f / float(std::max<uint16_t>(framebufferHeight, 1)) };
-    bgfx::setUniform(uniformContact, contactData);
-    const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * aspect, 0.0f };   // (round on the screen)
-    bgfx::setUniform(uniformSpell, spellData);
-    const float rimData[4] = { rim, RIM_REACH, RIM_REACH * aspect, 0.0f };   // (round on the screen)
-    bgfx::setUniform(uniformRim, rimData);
+    // Each step draws the picture so far into the target and copies it back: the look's own, then the cinematics'.
+    int step = 0;
     float shake[4];
     ffuLookShake(shake);   // (the impact's: ffu_look.cpp)
-    bgfx::setUniform(uniformShake, shake);
-    // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
-    bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-    bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
-    bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
-    bgfx::TransientVertexBuffer vertices;
-    bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);
-    const QuadVertex corners[6] = {
-        { -1.0f, 1.0f, 0.5f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.5f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.5f, 1.0f, 1.0f },
-        { -1.0f, 1.0f, 0.5f, 0.0f, 0.0f }, { 1.0f, -1.0f, 0.5f, 1.0f, 1.0f }, { -1.0f, -1.0f, 0.5f, 0.0f, 1.0f },
-    };
-    memcpy(vertices.data, corners, sizeof(corners));
-    bgfx::setVertexBuffer(0, &vertices);
-    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::submit(backendViewId, program);
+    auto draw = [&](bgfx::ProgramHandle which)
+    {
+        ++backendViewId;
+        targetViews[std::min(step++, 3)] = backendViewId;
+        bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
+        bgfx::setViewFrameBuffer(backendViewId, target);
+        bgfx::setViewRect(backendViewId, 0, 0, framebufferWidth, framebufferHeight);
+        bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
+        bgfx::setViewTransform(backendViewId, nullptr, nullptr);
+        bgfx::TransientVertexBuffer vertices;
+        bgfx::allocTransientVertexBuffer(&vertices, 6, quadLayout);
+        const QuadVertex corners[6] = {
+            { -1.0f, 1.0f, 0.5f, 0.0f, 0.0f }, { 1.0f, 1.0f, 0.5f, 1.0f, 0.0f }, { 1.0f, -1.0f, 0.5f, 1.0f, 1.0f },
+            { -1.0f, 1.0f, 0.5f, 0.0f, 0.0f }, { 1.0f, -1.0f, 0.5f, 1.0f, 1.0f }, { -1.0f, -1.0f, 0.5f, 0.0f, 1.0f },
+        };
+        memcpy(vertices.data, corners, sizeof(corners));
+        bgfx::setVertexBuffer(0, &vertices);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        bgfx::submit(backendViewId, which);
 
-    ++backendViewId;
-    bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
-    bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
-    bgfx::blit(backendViewId, {.handle = backendFrameBufferRT[0]}, {.handle = bgfx::getTexture(target, 0), .x = 0, .y = 0, .width = framebufferWidth, .height = framebufferHeight});
-    bgfx::touch(backendViewId);
+        ++backendViewId;
+        bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);
+        bgfx::setViewClear(backendViewId, BGFX_CLEAR_NONE);
+        bgfx::blit(backendViewId, {.handle = backendFrameBufferRT[0]}, {.handle = bgfx::getTexture(target, 0), .x = 0, .y = 0, .width = framebufferWidth, .height = framebufferHeight});
+        bgfx::touch(backendViewId);
+    };
+
+    if (look)
+    {
+        bgfx::setUniform(uniformDepth, depthRows);
+        bgfx::setUniform(uniformHaze, hazeData);
+        const float split[4] = { ffuLookSplit(), 0.0f, 0.0f, 0.0f };
+        bgfx::setUniform(uniformSplit, split);
+        const float contactData[4] = { contact, CONTACT_RING, 1.0f / float(framebufferWidth), 1.0f / float(std::max<uint16_t>(framebufferHeight, 1)) };
+        bgfx::setUniform(uniformContact, contactData);
+        const float spellData[4] = { spell, SPELL_DISC, SPELL_DISC * aspect, 0.0f };   // (round on the screen)
+        bgfx::setUniform(uniformSpell, spellData);
+        const float rimData[4] = { rim, RIM_REACH, RIM_REACH * aspect, 0.0f };   // (round on the screen)
+        bgfx::setUniform(uniformRim, rimData);
+        bgfx::setUniform(uniformShake, shake);
+        // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
+        bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
+        bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
+        draw(program);
+    }
+
+    // The cinematics (item 3): depth of field across and down, then the motion, each over the last step's picture
+    const float focus = focalDepth(internalState.viewMatrix) > 0.0f ? focalDepth(internalState.viewMatrix) : stage;
+    const float texel[2] = { 1.0f / float(framebufferWidth), 1.0f / float(std::max<uint16_t>(framebufferHeight, 1)) };
+    auto cinePass = [&](float which)
+    {
+        static const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        bgfx::setUniform(cineReproject, motion ? reproject : identity);
+        bgfx::setUniform(cineDepth, depthRows);
+        const float focusData[4] = { focus, dof, DOF_MOST * cineAt, which };
+        bgfx::setUniform(cineFocus, focusData);
+        const float frameData[4] = { barHeight, ffuLookSplit(), ffuGlowWanted() ? 1.0f : 0.0f, aspect };
+        bgfx::setUniform(cineFrame, frameData);
+        bgfx::setUniform(cineShake, shake);
+        const float motionData[4] = { MOTION_SHARE * cineAt, MOTION_MOST, texel[0], texel[1] };
+        bgfx::setUniform(cineMotion, motionData);
+        bgfx::setTexture(0, cineScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        bgfx::setTexture(1, cineDepthMap, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
+        draw(cineProgram);
+    };
+    if (dof > 0.0f && focus > 1.0f)
+    {
+        cinePass(0.0f);
+        cinePass(1.0f);
+    }
+    if (motion)
+        cinePass(2.0f);
+    static bool cineLogged = false;
+    if ((dof > 0.0f || motion) && (!cineLogged || passes % 60 == 0))
+        ffnx_info("FFU FF7 cinematics: depth of field %s (focus %.0f, stage %.0f), motion %s (the middle came %.1f %.1f px), weight %.2f\n",
+                  dof > 0.0f ? "on" : "off", focus, stage, motion ? "on" : "off", middleMove[0] * 0.5f * framebufferWidth,
+                  middleMove[1] * 0.5f * framebufferHeight, cineAt);
+    cineLogged = dof > 0.0f || motion;
 
     ++backendViewId;   // FFNx carries on (the menus) in a view of its own, after these
     bgfx::setViewMode(backendViewId, bgfx::ViewMode::Sequential);

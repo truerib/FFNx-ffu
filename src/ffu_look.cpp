@@ -47,6 +47,8 @@ namespace
     constexpr int LOOK_RIM = 128, LOOK_SOFT = 256;
     // (item 3: the impact, off unless told)
     constexpr int LOOK_IMPACT = 512;
+    // (item 3's cinematics: depth of field and motion blur while a summon or Limit plays, off unless told)
+    constexpr int LOOK_DOF = 1024, LOOK_MOTION = 2048;
     std::atomic<float> spellLevel{1.0f};   // its slider (ffu_look_spell)
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
@@ -120,6 +122,18 @@ bool ffuLookImpact()
 {
     int flags = frameFlags.load();
     return flags >= 0 && (flags & LOOK_IMPACT);
+}
+
+bool ffuLookDof()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_DOF);
+}
+
+bool ffuLookMotion()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_MOTION);
 }
 
 bool ffuFF7Cinematic();   // ffu_ff7look.cpp

@@ -39,6 +39,7 @@
 
 bool ffuLookGlow();   // ffu_look.cpp
 bool ffuLookSpell();
+bool ffuLookDof();
 bool ffuLookShown();
 float ffuLookLevel(int which);
 float ffuLookSplit();
@@ -164,8 +165,9 @@ bool Renderer::ffuGlowReady()
 // This draw goes into FFNx's frame while a battle is shown (Renderer::draw, its backend frame buffer branch).
 bool Renderer::ffuGlowWanted()
 {
-    // (the mask and its blur serve the glow and the spells' light, each with its own switch)
-    return (ffuLookGlow() || ffuLookSpell()) && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
+    // (the mask and its blur serve the glow and the spells' light, each with its own switch; the mask also keeps the
+    // effects sharp under the cinematics' depth of field: ffu_ff7look.cpp)
+    return (ffuLookGlow() || ffuLookSpell() || ffuLookDof()) && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
         && !ffuLayerActive && !ffuBattleLayerFrame && programState >= 0;
 }
 
