@@ -168,7 +168,10 @@ void main()
         float contact = 1.0 - u_ff8Look.w * occlusion / 8.0;
 
         float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
-        shaded = scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545));
+        // (the battle and its ground, faded out from twice to three times the depth its 3D stands at: FF8's far scenery
+        // keeps its own light, as its pieces stand on lines of their own)
+        float onStage = 1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z);
+        shaded = scene.rgb * pow(max(vec3_splat(mix(1.0, light, onStage)), vec3_splat(1e-4)), vec3_splat(0.4545));
     }
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)

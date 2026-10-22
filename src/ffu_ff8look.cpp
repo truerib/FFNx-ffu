@@ -163,7 +163,9 @@ static DepthLines depthLines()
             stageLowest = std::min(stageLowest, sampled[i].z);
         }
         lines.stageOffset = float(offsetSum / std::max<uint32_t>(lines.stage, 1));
-        lines.stageFrom = stageLowest - 0.0005f;
+        // (from its offset up: its nearest pixels lie below its lowest sampled vertex, and read on the characters' line they
+        // stood beyond the sky; the characters' line stays below 0.33 to 40,000 units)
+        lines.stageFrom = std::min(stageLowest, lines.stageOffset) + 0.0003f;
     }
     double sx = 0.0, sy = 0.0, sxx = 0.0, sxy = 0.0;
     for (uint32_t i = 0; i < samples; i++)
