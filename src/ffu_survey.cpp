@@ -13,11 +13,12 @@
 //    GNU General Public License for more details.                          //
 /****************************************************************************/
 
-// Final Fantasy Universe: a survey of FF8's battle draws (docs/battle-look.md "FF8 lighting"), for a screen-space
-// lighting pass over FF8's own depth before its first flat 2D draw. Off unless FFU_FF8_SURVEY=1. Every draw FFNx makes
-// in an FF8 battle frame is counted: 3D (screen-space vertices with depth: some rhw other than 1) or flat (every rhw 1:
-// HUD, menus, flat sprites) or untransformed, in the order they come, with their blend modes, depth tests and writes and
-// the 3D draws' depth range; one line every 120 frames (FFNx.log, "FFU survey").
+// Final Fantasy Universe: a survey of FF8's and FF7's battle draws (docs/battle-look.md "FF8 lighting", "FF7 haze"), for
+// a screen-space pass over the game's own depth before its first flat 2D draw. Off unless FFU_FF8_SURVEY=1 (FF8) or
+// FFU_LOOK_SURVEY=1 (either). Every draw FFNx makes in a battle frame is counted: screen-space with depth (some rhw
+// other than 1), flat (every rhw 1: HUD, menus, flat sprites) or untransformed (FF7's 3D), in the order they come, with
+// their blend modes, depth tests and writes and the screen-space 3D draws' depth range; one line every 120 frames
+// (FFNx.log, "FFU survey").
 
 #include <algorithm>
 #include <cstdlib>
@@ -34,7 +35,8 @@ namespace
     struct Frame
     {
         uint32_t draws = 0, depthDraws = 0, flatDraws = 0, worldDraws = 0;
-        int firstFlat = -1, lastDepth = -1, depthAfterFlat = 0;
+        int firstFlat = -1, lastDepth = -1, depthAfterFlat = 0, lastWorld = -1, worldAfterFlat = 0;
+        uint32_t worldTested = 0, worldWritten = 0;
         uint32_t depthBlend[8] = {}, flatBlend[8] = {};
         uint32_t depthTested = 0, depthWritten = 0, flatTested = 0, flatWritten = 0;
         float zMin = 1e9f, zMax = -1e9f, rhwMin = 1e9f, rhwMax = -1e9f;
@@ -47,16 +49,20 @@ void ffuSurveyDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_t
 {
     if (surveyOn < 0)
     {
-        const char *value = getenv("FFU_FF8_SURVEY");
-        surveyOn = value && !strcmp(value, "1") ? 1 : 0;
+        const char *value = getenv("FFU_FF8_SURVEY"), *either = getenv("FFU_LOOK_SURVEY");
+        surveyOn = (either && !strcmp(either, "1")) ? 1 : (value && !strcmp(value, "1") && ff8) ? 1 : 0;
     }
-    if (!surveyOn || !ff8 || getmode_cached()->driver_mode != MODE_BATTLE)
+    if (!surveyOn || getmode_cached()->driver_mode != MODE_BATTLE)
         return;
     const int index = (int)frame.draws++;
     const uint32_t blend = blendMode < 8 ? blendMode : 7;
     if (vertextype != TLVERTEX)
     {
         frame.worldDraws++;
+        frame.lastWorld = index;
+        if (frame.firstFlat >= 0) frame.worldAfterFlat++;
+        if (depthTest) frame.worldTested++;
+        if (depthMask) frame.worldWritten++;
         return;
     }
     bool flat = true;
@@ -97,11 +103,12 @@ void ffuSurveyFrame()
         return;
     if (++frames % 120 == 0)
         ffnx_info("FFU survey: %u draws: %u with depth (blends 0-4: %u %u %u %u %u; tested %u, written %u; z %.5f..%.5f, rhw %.6f..%.6f), "
-                  "%u flat (blends %u %u %u %u %u; tested %u, written %u), %u untransformed; first flat #%d, last with depth #%d, "
-                  "%d with depth after the first flat\n",
+                  "%u flat (blends %u %u %u %u %u; tested %u, written %u), %u untransformed (tested %u, written %u; last #%d, %d after the first flat); "
+                  "first flat #%d, last with depth #%d, %d with depth after the first flat\n",
                   frame.draws, frame.depthDraws, frame.depthBlend[0], frame.depthBlend[1], frame.depthBlend[2], frame.depthBlend[3],
                   frame.depthBlend[4], frame.depthTested, frame.depthWritten, frame.zMin, frame.zMax, frame.rhwMin, frame.rhwMax,
                   frame.flatDraws, frame.flatBlend[0], frame.flatBlend[1], frame.flatBlend[2], frame.flatBlend[3], frame.flatBlend[4],
-                  frame.flatTested, frame.flatWritten, frame.worldDraws, frame.firstFlat, frame.lastDepth, frame.depthAfterFlat);
+                  frame.flatTested, frame.flatWritten, frame.worldDraws, frame.worldTested, frame.worldWritten, frame.lastWorld, frame.worldAfterFlat,
+                  frame.firstFlat, frame.lastDepth, frame.depthAfterFlat);
     frame = Frame();
 }

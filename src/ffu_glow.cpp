@@ -37,6 +37,7 @@
 
 bool ffuLookGlow();   // ffu_look.cpp
 bool ffuLookShown();
+float ffuLookLevel(int which);
 
 namespace
 {
@@ -100,7 +101,7 @@ namespace
         };
         memcpy(vertices.data, corners, sizeof(corners));
         const float passData[4] = { mode, stepU, stepV, 0.0f };
-        const float params[4] = { THRESHOLD, KNEE, SMALL, WIDE };
+        const float params[4] = { THRESHOLD, KNEE, SMALL * ffuLookLevel(3), WIDE * ffuLookLevel(3) };   // (Richard's slider)
         bgfx::setUniform(uniformPass, passData);
         bgfx::setUniform(uniformParams, params);
         bgfx::setTexture(0, samplerA, a, BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
@@ -254,7 +255,7 @@ void Renderer::ffuGlowComposite(float x0, float x2, float gameWidth, float gameH
     };
     memcpy(vertices.data, corners, sizeof(corners));
     const float passData[4] = { 2.0f, 0.0f, 0.0f, 0.0f };
-    const float params[4] = { THRESHOLD, KNEE, SMALL, WIDE };
+    const float params[4] = { THRESHOLD, KNEE, SMALL * ffuLookLevel(3), WIDE * ffuLookLevel(3) };   // (Richard's slider)
     bgfx::setUniform(uniformPass, passData);
     bgfx::setUniform(uniformParams, params);
     bgfx::setTexture(0, samplerA, bgfx::getTexture(halves[0]), BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);

@@ -35,7 +35,10 @@
 
 namespace
 {
-    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8;
+    constexpr int LOOK_LIGHTING = 1, LOOK_GLOW = 2, LOOK_SHARP = 4, LOOK_CAMERA = 8, LOOK_ATMOSPHERE = 16;
+    // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
+    // all around, contact shading, the glow, the haze (ffu_look_levels)
+    std::atomic<float> levels[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
 
     std::atomic<int> requestedFlags{-1};   // -1: never told (the look's default: everything on)
     bool tuned = false;                     // the look's values are in FFNx's lighting now
@@ -46,7 +49,8 @@ namespace
 }
 
 // flags: bit 0 the battle lighting (FF8's: ffu_ff8look.cpp), bit 1 the glow, bit 2 the anti-aliasing (both ffu_glow.cpp),
-// bit 3 the stick camera (FF7's held across action cameras: ff7/battle/camera.cpp; FF8's is the bridge's own).
+// bit 3 the stick camera (FF7's held across action cameras: ff7/battle/camera.cpp; FF8's is the bridge's own), bit 4 the
+// atmosphere (FF8's haze: ffu_ff8look.cpp).
 extern "C" __declspec(dllexport) void ffu_look(int flags)
 {
     requestedFlags.store(flags);
@@ -62,6 +66,26 @@ bool ffuLookSharp()
 {
     int flags = requestedFlags.load();
     return flags < 0 || (flags & LOOK_SHARP);
+}
+
+// The sliders, from the bridge's thread (0-2 each; 1: as built).
+extern "C" __declspec(dllexport) void ffu_look_levels(float light, float fill, float contact, float glow, float haze)
+{
+    const float values[5] = { light, fill, contact, glow, haze };
+    for (int i = 0; i < 5; i++)
+        levels[i].store(values[i] >= 0.0f && values[i] <= 2.0f ? values[i] : 1.0f);
+}
+
+// 0 the main light, 1 the light from all around, 2 contact shading, 3 the glow, 4 the haze.
+float ffuLookLevel(int which)
+{
+    return which >= 0 && which < 5 ? levels[which].load() : 1.0f;
+}
+
+bool ffuLookAtmosphere()
+{
+    int flags = requestedFlags.load();
+    return flags < 0 || (flags & LOOK_ATMOSPHERE);
 }
 
 bool ffuLookCamera()
@@ -90,10 +114,12 @@ namespace
         return getmode_cached()->driver_mode == MODE_BATTLE && (flags < 0 || (flags & LOOK_LIGHTING)) && shown.load();
     }
 
+    float putLight = LIGHT, putAmbient = AMBIENT;   // what the look last put (the sliders move it)
+
     bool lookInPlace()
     {
         return lighting.getMetallic() == METALLIC && lighting.getSpecular() == SPECULAR && lighting.getRoughness() == ROUGHNESS
-            && lighting.getLightIntensity() == LIGHT && lighting.getAmbientIntensity() == AMBIENT;
+            && lighting.getLightIntensity() == putLight && lighting.getAmbientIntensity() == putAmbient;
     }
 
     void put(float metallic, float specular, float roughness, float light, float ambient)
@@ -170,7 +196,9 @@ void ffuLookAfterLighting()
         battleLight = lighting.getLightIntensity();
         battleAmbient = lighting.getAmbientIntensity();
     }
-    put(METALLIC, SPECULAR, ROUGHNESS, LIGHT, AMBIENT);
+    putLight = LIGHT * levels[0].load();
+    putAmbient = AMBIENT * levels[1].load();
+    put(METALLIC, SPECULAR, ROUGHNESS, putLight, putAmbient);
     if (!tuned)
         ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 1.7x the ambient)\n");
     tuned = true;

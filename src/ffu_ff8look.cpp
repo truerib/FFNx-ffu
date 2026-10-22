@@ -42,6 +42,8 @@
 
 bool ffuLookLighting();   // ffu_look.cpp
 bool ffuLookShown();
+bool ffuLookAtmosphere();
+float ffuLookLevel(int which);
 
 namespace
 {
@@ -50,6 +52,9 @@ namespace
     constexpr uint32_t SSIGPU_SCALE_X = 0xB7CC14, SSIGPU_SCALE_Y = 0xB7CC18, SSIGPU_OFFSET_X = 0x1CA89E0, SSIGPU_OFFSET_Y = 0x1CA89E4;
     // The look's balance (the same as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact
     constexpr float AMBIENT = 0.5f, KEY = 0.85f, WRAP = 0.35f, CONTACT = 0.6f;
+    // The haze (as FF9's outdoors: BattleScene.cs): from half again the depth FF8's 3D stands at, full (its most) three
+    // times that further, toward the sky's own colour (the shader finds the sky: no depth near the picture's top)
+    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f, HAZE_RANGE = 3.0f;
     // FF8's battle camera: its view matrix as FF8's LookAt writes it each frame (0x503230 -> 0x50CB40: int16 rows,
     // 4.12, view = M * world; side-session research 2026-10-22 battle-camera-stick.md), so the main light stays put in
     // FF8's battle world as its cameras swing. Toward the light in that world (y down): high, from one side.
@@ -63,6 +68,7 @@ namespace
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformLens = BGFX_INVALID_HANDLE, uniformCam = BGFX_INVALID_HANDLE, uniformFrame = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformLight = BGFX_INVALID_HANDLE, uniformLook = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformHaze = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle litTarget = BGFX_INVALID_HANDLE;
@@ -142,6 +148,7 @@ bool Renderer::ffuFF8Ready()
     uniformDepth = bgfx::createUniform("u_ff8Depth", bgfx::UniformType::Vec4);
     uniformLight = bgfx::createUniform("u_ff8Light", bgfx::UniformType::Vec4);
     uniformLook = bgfx::createUniform("u_ff8Look", bgfx::UniformType::Vec4);
+    uniformHaze = bgfx::createUniform("u_ff8Haze", bgfx::UniformType::Vec4);
     samplerScene = bgfx::createUniform("s_ff8Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff8Depth", bgfx::UniformType::Sampler);
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
@@ -243,14 +250,20 @@ void Renderer::ffuFF8Light()
     const float depthFit[4] = { a, b, ffuGlowWanted() ? 1.0f : 0.0f, 0.0f };
     float toLight[3], up[3];
     const bool fromWorld = towardLight(toLight, up);
-    const float light[4] = { toLight[0], toLight[1], toLight[2], KEY };
-    const float look[4] = { AMBIENT, 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), CONTACT };
+    // Richard's sliders scale the light, the light from all around and the contact shading; the exposure stays, so a
+    // stronger light is a brighter battle
+    const float light[4] = { toLight[0], toLight[1], toLight[2], KEY * ffuLookLevel(0) };
+    const float look[4] = { AMBIENT * ffuLookLevel(1), 1.0f / (1.0f + WRAP), 1.0f / (AMBIENT + 0.5f * KEY), std::min(CONTACT * ffuLookLevel(2), 1.0f) };
+    const float stage = samples > 0 ? float(sumX / double(samples)) : 10000.0f;   // (the depth FF8's 3D stands at, on average)
+    const float hazeMost = ffuLookAtmosphere() ? std::min(HAZE_MOST * ffuLookLevel(4), 0.9f) : 0.0f;
+    const float haze[4] = { HAZE_START * stage, 1.0f / std::max(HAZE_RANGE * stage, 1.0f), hazeMost, 0.0f };
     bgfx::setUniform(uniformLens, lens);
     bgfx::setUniform(uniformCam, cam);
     bgfx::setUniform(uniformFrame, frame);
     bgfx::setUniform(uniformDepth, depthFit);
     bgfx::setUniform(uniformLight, light);
     bgfx::setUniform(uniformLook, look);
+    bgfx::setUniform(uniformHaze, haze);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::TransientVertexBuffer vertices;
