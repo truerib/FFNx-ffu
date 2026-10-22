@@ -18,6 +18,9 @@
 //   Never held longer than HOLD_MOST_MS, never armed longer than ARMED_MOST_MS.
 // ffu_ff8_battle_held() says when it holds (1: the bridge's `cut_ready` then), is still loading (0), or is not armed
 // (-1: never armed, let go, or given up: the bridge's own readiness then).
+// The own battle engine (docs/battle-engine.md; ffu_ff8_battle_quick(2)): FF8's window never comes in front; the engine
+// draws the battle's opening itself from the cut, so FF8 isn't held: it runs unpaced through its opening too until its
+// opening frame (step 2's frames) reaches the engine's (the bridge's ffu_ff8_own_opening_frame), then paced, in step.
 
 #include <windows.h>
 #include <atomic>
@@ -37,6 +40,7 @@ namespace
     constexpr DWORD ARMED_MOST_MS = 12000;
 
     std::atomic<int> armed{0}, held{0};
+    int mode;            // 1: held at its first lit frame until shown; 2: caught up with the own battle engine's opening
     DWORD armedAt, battleFrom;
     int fadeSeen, unpaced;
     bool swirlCut, battleSeen;
@@ -44,6 +48,20 @@ namespace
     bool shown()
     {
         return gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd);
+    }
+
+    // The bridge's export: the own battle engine's opening frame now (-1: none yet).
+    int ownOpeningFrame()
+    {
+        static int (*opening)() = nullptr;
+        static DWORD lastLook = 0;
+        if (!opening && GetTickCount() - lastLook >= 1000)
+        {
+            lastLook = GetTickCount();
+            HMODULE bridge = GetModuleHandleA("dinput.dll");
+            opening = bridge ? (int (*)())(void *)GetProcAddress(bridge, "ffu_ff8_own_opening_frame") : nullptr;
+        }
+        return opening ? opening() : -1;
     }
 
     void disarm(const char *why)
@@ -93,8 +111,9 @@ extern "C" __declspec(dllexport) void ffu_ff8_battle_quick(int on)
     armedAt = GetTickCount();
     fadeSeen = unpaced = 0;
     swirlCut = battleSeen = false;
+    mode = on == 2 ? 2 : 1;
     armed = 1;
-    ffnx_info("FFU transition: armed for this battle\n");
+    ffnx_info("FFU transition: armed for this battle (%s)\n", mode == 2 ? "the own battle engine's: caught up, never held" : "held until shown");
 }
 
 extern "C" __declspec(dllexport) int ffu_ff8_battle_held()
@@ -146,7 +165,25 @@ bool ffuTransitionLimit()
             disarm("past its opening before the hold");
             return false;
         }
-        if (step == 2 && ++fadeSeen > FADE_FRAMES)
+        if (step == 2 && mode == 2)
+        {
+            const int target = ownOpeningFrame();
+            if (target >= 0 && ++fadeSeen >= target)
+            {
+                disarm("caught up with the engine's opening");
+                ffnx_info("FFU transition: at its opening frame %d, the engine's %d, %u ms after the cut\n", fadeSeen, target,
+                          unsigned(GetTickCount() - armedAt));
+                return false;
+            }
+            if (target < 0 && fadeSeen >= FADE_FRAMES)   // (no opening from the engine yet: held as before, never further)
+            {
+                hold();
+                disarm("held and let go (the engine's opening never came)");
+                return false;
+            }
+            if (target < 0) ++fadeSeen;
+        }
+        else if (step == 2 && ++fadeSeen > FADE_FRAMES)
         {
             hold();
             disarm("held and let go");
