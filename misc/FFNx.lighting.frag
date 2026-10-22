@@ -318,7 +318,7 @@ void main()
         if (abs(VSFlags.y - 1.0) < 0.01) gl_FragColor.a = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
         else if (abs(VSFlags.y - 3.0) < 0.01)
         {
-            gl_FragColor.rgb *= gl_FragColor.a;
+            gl_FragColor.rgb = clamp(gl_FragColor.rgb, 0.0, 1.0) * gl_FragColor.a;   // (the blend clamps its source first)
             gl_FragColor.a = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
         }
     }

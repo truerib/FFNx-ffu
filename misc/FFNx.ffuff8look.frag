@@ -154,6 +154,6 @@ void main()
         if (sky.w >= 2.0 && backdrop > u_ff8Haze.x)
             shaded = mix(shaded, sky.rgb, u_ff8Haze.z * outdoors * clamp((p.z - u_ff8Haze.x) / (backdrop - u_ff8Haze.x), 0.0, 1.0));
     }
-    float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a * 3.0, 0.0, 1.0) : 0.0;
+    float effect = u_ff8Depth.z > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
     gl_FragColor = vec4(mix(shaded, scene.rgb, effect), scene.a);
 }

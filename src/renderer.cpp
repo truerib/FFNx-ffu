@@ -1483,6 +1483,7 @@ void Renderer::draw(bool uniformsAlreadyAttached, bool texturesAlreadyAttached, 
             internalState.state = ffuGlowState(internalState.state);
             ffuGlowFrame = true;
         }
+        ffuGlowFlatDraw = false;   // Final Fantasy Universe: set again by gl.cpp for its next draw (no other draw path inherits it)
     }
     bgfx::setState(internalState.state);
 
