@@ -82,6 +82,12 @@ namespace
         const float dt = lastTick ? std::min(float(now - lastTick) / 1000.0f, 0.1f) : 0.0f;
         lastTick = now;
         const bool playing = ffuLookCinema() && cinematicPlaying();
+        static bool wasPlaying = false;
+        if (playing != wasPlaying && ff7_externals.anim_event_queue.data() && ff7_externals.effect100_counter)
+            ffnx_info("FFU FF7 bars: %s (command 0x%02X, effects %u %u %u)\n", playing ? "a summon or Limit plays" : "it ended",
+                      ff7_externals.anim_event_queue[0].commandIndex, *ff7_externals.effect100_counter,
+                      ff7_externals.effect60_counter ? *ff7_externals.effect60_counter : 0, ff7_externals.effect10_counter ? *ff7_externals.effect10_counter : 0);
+        wasPlaying = playing;
         barsHold = playing ? 0.5f : std::max(barsHold - dt, 0.0f);
         const bool wanted = playing || barsHold > 0.0f;
         bars = wanted ? std::min(bars + dt / 0.45f, 1.0f) : std::max(bars - dt / 0.6f, 0.0f);

@@ -30,7 +30,9 @@ uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (
 
 float viewDepth(float d)
 {
-    return (u_ff7Depth.y - d * u_ff7Depth.w) / max(d * u_ff7Depth.z - u_ff7Depth.x, 1e-6);
+    // (with FF7's projection both parts are negative: only a zero denominator is guarded, never its sign)
+    float below = d * u_ff7Depth.z - u_ff7Depth.x;
+    return (u_ff7Depth.y - d * u_ff7Depth.w) / (abs(below) < 1e-6 ? -1e-6 : below);
 }
 
 void main()
