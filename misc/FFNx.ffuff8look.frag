@@ -39,6 +39,7 @@ uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT); w the test view (FFU_LOOK_DEBUG: 1 what each pixel is taken for, 2 its shadow)
+uniform vec4 u_ff8Shake;   // the impact's shake: xy the picture's offset (uv), z how much it is magnified (1: none)
 uniform vec4 u_ff8Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv); w the soft shadows (1: on)
 uniform vec4 u_ff8Floor;   // FF8's battle floor: view depth = w / dot(xyz, the view ray); w 0: not read this frame
 
@@ -180,11 +181,12 @@ vec2 uvAt(vec3 p)
 
 void main()
 {
-    vec2 uv = v_texcoord0;
+    // (the impact's shake: FF8's 3D picture moved and magnified a little, so its edges stay in; its HUD comes after)
+    vec2 uv = (v_texcoord0 - 0.5) / u_ff8Shake.z + 0.5 + u_ff8Shake.xy;
     vec4 scene = texture2D(s_ff8Scene, uv);
-    if (uv.x < u_ff8Haze.y)
+    if (v_texcoord0.x < u_ff8Haze.y)
     {
-        gl_FragColor = u_ff8Haze.y - uv.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;   // (the test split: FF8's own on the left)
+        gl_FragColor = u_ff8Haze.y - v_texcoord0.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;   // (the test split: FF8's own on the left)
         return;
     }
     float z = texture2D(s_ff8Depth, uv).x;

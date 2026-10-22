@@ -47,6 +47,8 @@ bool ffuLookCinema();
 bool ffuLookLighting();
 bool ffuLookSpell();
 bool ffuLookRim();
+bool ffuLookShaking();
+void ffuLookShake(float shake[4]);
 bgfx::TextureHandle ffuGlowLight();   // ffu_glow.cpp
 bool ffuLookShown();
 float ffuLookLevel(int which);
@@ -72,6 +74,7 @@ namespace
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE, uniformSplit = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformContact = BGFX_INVALID_HANDLE, uniformSpell = BGFX_INVALID_HANDLE, uniformRim = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformShake = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE, samplerLight = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
@@ -125,6 +128,12 @@ namespace
         bars = wanted ? std::min(bars + dt / 0.45f, 1.0f) : std::max(bars - dt / 0.6f, 0.0f);
         return bars * bars * (3.0f - 2.0f * bars);
     }
+}
+
+// FF7 plays a summon or a Limit now (the impact's hard shake as one begins: ffu_look.cpp)
+bool ffuFF7Cinematic()
+{
+    return !ff8 && getmode_cached()->driver_mode == MODE_BATTLE && cinematicPlaying();
 }
 
 // From gl_draw_indexed_primitive for every draw of an FF7 battle frame (with FFNx's lighting on, as its deferred draws
@@ -200,6 +209,7 @@ bool Renderer::ffuFF7Ready()
     uniformContact = bgfx::createUniform("u_ff7Contact", bgfx::UniformType::Vec4);
     uniformSpell = bgfx::createUniform("u_ff7Spell", bgfx::UniformType::Vec4);
     uniformRim = bgfx::createUniform("u_ff7Rim", bgfx::UniformType::Vec4);
+    uniformShake = bgfx::createUniform("u_ff7Shake", bgfx::UniformType::Vec4);
     samplerLight = bgfx::createUniform("s_ff7Light", bgfx::UniformType::Sampler);
     samplerScene = bgfx::createUniform("s_ff7Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff7Depth", bgfx::UniformType::Sampler);
@@ -232,7 +242,7 @@ void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 240 || !ffuFF7Ready())
         return;
     ffuFF7Prepare();
@@ -262,7 +272,8 @@ void Renderer::ffuFF7Pass()
     const bgfx::TextureHandle light = ffuGlowLight();
     const float spell = ffuLookSpell() && stage > 1.0f && bgfx::isValid(light) ? SPELL * ffuLookLevel(5) : 0.0f;
     const float rim = ffuLookRim() && stage > 1.0f ? RIM : 0.0f;   // (its fade needs the stage's size)
-    if (!haze && barsAt <= 0.0f && contact <= 0.0f && spell <= 0.0f && rim <= 0.0f)
+    const bool shaking = ffuLookShaking();
+    if (!haze && barsAt <= 0.0f && contact <= 0.0f && spell <= 0.0f && rim <= 0.0f && !shaking)
         return;
     const float aspect = float(framebufferWidth) / float(std::max<uint16_t>(framebufferHeight, 1));
     const float barHeight = std::max(0.0f, (1.0f - aspect / CINEMA_ASPECT) * 0.5f) * barsAt;
@@ -287,6 +298,9 @@ void Renderer::ffuFF7Pass()
     bgfx::setUniform(uniformSpell, spellData);
     const float rimData[4] = { rim, RIM_REACH, RIM_REACH * aspect, 0.0f };   // (round on the screen)
     bgfx::setUniform(uniformRim, rimData);
+    float shake[4];
+    ffuLookShake(shake);   // (the impact's: ffu_look.cpp)
+    bgfx::setUniform(uniformShake, shake);
     // (no light: the scene itself bound, never read, as bgfx wants every sampler the program declares)
     bgfx::setTexture(2, samplerLight, spell > 0.0f ? light : backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);

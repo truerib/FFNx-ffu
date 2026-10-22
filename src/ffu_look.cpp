@@ -25,7 +25,9 @@
 // Off: FFNx's installed config again (lighting/config.toml, its per-battle groups too). Nothing changes outside
 // battles, and nothing at all when FFNx's lighting wasn't on at start (it is set up only then).
 
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 
@@ -43,6 +45,8 @@ namespace
     constexpr int LOOK_SPELL = 64;
     // (Richard's next list, item 2: rim light and softer shadows; off unless told, as the spells' light)
     constexpr int LOOK_RIM = 128, LOOK_SOFT = 256;
+    // (item 3: the impact, off unless told)
+    constexpr int LOOK_IMPACT = 512;
     std::atomic<float> spellLevel{1.0f};   // its slider (ffu_look_spell)
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
@@ -110,6 +114,90 @@ bool ffuLookSoftShadows()
 {
     int flags = frameFlags.load();
     return flags >= 0 && (flags & LOOK_SOFT);
+}
+
+bool ffuLookImpact()
+{
+    int flags = frameFlags.load();
+    return flags >= 0 && (flags & LOOK_IMPACT);
+}
+
+bool ffuFF7Cinematic();   // ffu_ff7look.cpp
+bool ffuLookShown();
+
+// The impact (Richard's next list, item 3: "a small camera shake ... on big hits and limits"; docs/battle-look.md
+// "Impact"): a unit's HP falling by a tenth of its most or more between frames (a quarter: a hard one), and FF7's summons
+// and Limits beginning, shake the battle's 3D picture in FF7's and FF8's passes (before their menus: those stay still).
+// FF7's units: battle_actor_vars, 10 x 0x68 from 0x9AB0DC, HP +0x2C, its most +0x30; FF8's: 7 x 0xD0 from 0x1D27B10, HP
+// +0x18, its most +0x1C (the bridges' own reads: shadow_ff7.c, shadow_ff8.c). FF9's is FFUGlobe's (BattleImpact.cs).
+namespace
+{
+    constexpr float HIT = 0.1f, HARD_HIT = 0.25f, SHAKE = 0.006f, HARD_SHAKE = 0.012f, SHAKE_TIME = 0.3f, HARD_SHAKE_TIME = 0.45f;
+    int impactHp[10];
+    bool impactSeen = false, impactCinema = false;
+    ULONGLONG shakeFrom = 0;
+    float shakeFor = 0.0f, shakeSize = 0.0f;
+
+    float shakeAge()
+    {
+        return shakeFrom ? float(GetTickCount64() - shakeFrom) / 1000.0f : 1e9f;
+    }
+
+    void impactFrame()
+    {
+        if (!ffuLookImpact() || !ffuLookShown() || getmode_cached()->driver_mode != MODE_BATTLE)
+        {
+            impactSeen = impactCinema = false;
+            return;
+        }
+        const int units = ff8 ? 7 : 10;
+        const uint8_t *table = (const uint8_t *)(ff8 ? 0x1D27B10u : 0x9AB0DCu);
+        const int stride = ff8 ? 0xD0 : 0x68, hpAt = ff8 ? 0x18 : 0x2C, mostAt = ff8 ? 0x1C : 0x30;
+        float strongest = 0.0f;
+        for (int i = 0; i < units; i++)
+        {
+            const int hp = *(const int *)(table + stride * i + hpAt), most = *(const int *)(table + stride * i + mostAt);
+            if (impactSeen && most > 0 && hp >= 0 && hp < impactHp[i] && impactHp[i] <= most)
+                strongest = std::max(strongest, float(impactHp[i] - hp) / float(most));
+            impactHp[i] = hp;
+        }
+        impactSeen = true;
+        if (!ff8)
+        {
+            const bool cinema = ffuFF7Cinematic();
+            if (cinema && !impactCinema) strongest = std::max(strongest, HARD_HIT);   // (a summon's or a Limit's start)
+            impactCinema = cinema;
+        }
+        if (strongest < HIT)
+            return;
+        const bool hard = strongest >= HARD_HIT;
+        const float size = hard ? HARD_SHAKE : SHAKE;
+        if (shakeAge() < shakeFor && size <= shakeSize)
+            return;   // (a shake as big or bigger running)
+        shakeFrom = GetTickCount64();
+        shakeFor = hard ? HARD_SHAKE_TIME : SHAKE_TIME;
+        shakeSize = size;
+    }
+}
+
+// The battle picture's shake now, for FF7's and FF8's passes: x, y its offset (across the picture), z how much it is
+// magnified (1: none, so its edges stay in); fading out, two unrelated wobbles (as FF9's: BattleImpact.cs)
+void ffuLookShake(float shake[4])
+{
+    const float age = shakeAge();
+    shake[0] = shake[1] = shake[3] = 0.0f;
+    shake[2] = 1.0f;
+    if (!(age < shakeFor) || !ffuLookImpact())
+        return;
+    const float fade = 1.0f - age / shakeFor, size = shakeSize * fade * fade;
+    shake[0] = size * sinf(age * 71.0f);
+    shake[1] = size * cosf(age * 53.0f) * 1.3f;
+    shake[2] = 1.0f + 2.6f * shakeSize;
+}
+
+bool ffuLookShaking()
+{
+    return ffuLookImpact() && shakeAge() < shakeFor;
 }
 
 // Tests: FFU_LOOK_DEBUG=<n> paints FF8's pass's own view (1 what each pixel is taken for, 2 its shadow), 0 none
@@ -209,6 +297,7 @@ void ffuLookFrame()
 {
     frameFlags.store(requestedFlags.load());
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
+    impactFrame();
     ffuSurveyFrame();
     ffuFF8LookFrame();
     ffuFF7LookFrame();

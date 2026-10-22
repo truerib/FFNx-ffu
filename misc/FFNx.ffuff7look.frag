@@ -31,6 +31,7 @@ SAMPLER2D(s_ff7Light, 2);   // the light FF7's effects added, blurred at a quart
 uniform vec4 u_ff7Depth;   // FF7's depth along the view axis: (z x + y) / (z z' + w), the rows FFNx drew its 3D with
 uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (0: none), z the bars' height (uv), w the mask
 uniform vec4 u_ff7Split;   // x: the test split (FFU_LOOK_SPLIT): FF7's own left of it
+uniform vec4 u_ff7Shake;   // the impact's shake: xy the picture's offset (uv), z how much it is magnified (1: none)
 uniform vec4 u_ff7Rim;     // the rim light: x its strength (0: off), yz how far in from an edge it reaches (uv)
 uniform vec4 u_ff7Spell;   // the spells' light: x its strength (0: off), yz its smoothing taps' offset (uv)
 uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its ring's radius (uv across); zw one texel (uv)
@@ -124,11 +125,12 @@ float rimAt(vec2 uv, float here)
 
 void main()
 {
-    vec2 uv = v_texcoord0;
+    // (the impact's shake: FF7's 3D picture moved and magnified a little, so its edges stay in; its menus come after)
+    vec2 uv = (v_texcoord0 - 0.5) / u_ff7Shake.z + 0.5 + u_ff7Shake.xy;
     vec4 scene = texture2D(s_ff7Scene, uv);
-    if (uv.x < u_ff7Split.x)
+    if (v_texcoord0.x < u_ff7Split.x)
     {
-        gl_FragColor = u_ff7Split.x - uv.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;
+        gl_FragColor = u_ff7Split.x - v_texcoord0.x < 0.0012 ? vec4(0.0, 0.0, 0.0, scene.a) : scene;
         return;
     }
     vec3 shown = scene.rgb;
@@ -186,6 +188,6 @@ void main()
             shown = mix(shown, sky.rgb / sky.w, haze);
         }
     }
-    shown *= step(u_ff7Haze.z, uv.y) * step(uv.y, 1.0 - u_ff7Haze.z);   // (the bars: black)
+    shown *= step(u_ff7Haze.z, v_texcoord0.y) * step(v_texcoord0.y, 1.0 - u_ff7Haze.z);   // (the bars: black, never shaken)
     gl_FragColor = vec4(shown, scene.a);
 }
