@@ -189,7 +189,7 @@ void main()
     // The spells' light: what stands round an effect takes its light, as a factor on its own colour (the battle and its
     // ground: faded out beyond them as the lighting is)
     if (u_ff8Spell.x > 0.0)
-        shaded += shaded * spellLight(uv) * u_ff8Spell.x * (1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z));
+        shaded += shaded * (vec3_splat(1.0) - exp(-spellLight(uv) * u_ff8Spell.x)) * (1.0 - smoothstep(1.333 * u_ff8Haze.x, 2.0 * u_ff8Haze.x, p.z));   // (soft: at most twice)
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {

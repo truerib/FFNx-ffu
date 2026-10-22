@@ -61,7 +61,7 @@ namespace
     // The spells' light (Richard's next list, item 1): the light FF7's effects added (the glow's mask, blurred about a
     // tenth of the picture wide at a sixteenth of it by ffu_glow.cpp, the last frame's), multiplied into what stands
     // round it: its strength at the slider's 1
-    constexpr float SPELL = 3.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
+    constexpr float SPELL = 6.0f, SPELL_DISC = 0.02f;   // (its smoothing taps' offset)
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable

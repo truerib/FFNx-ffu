@@ -112,7 +112,8 @@ void main()
         // far scenery as they are)
         float here = nearness(uv);
         float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
-        shown += shown * spellLight(uv) * u_ff7Spell.x * onStage * (1.0 - effect);
+        // (a soft curve: a small hit's light doubled, a summon's never past twice the picture's own brightness)
+        shown += shown * (vec3_splat(1.0) - exp(-spellLight(uv) * u_ff7Spell.x)) * onStage * (1.0 - effect);
     }
     if (u_ff7Haze.y > 0.0 && d < 0.9999 && d > 0.0001)
     {
