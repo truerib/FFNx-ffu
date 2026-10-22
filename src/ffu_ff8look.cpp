@@ -470,7 +470,8 @@ void Renderer::ffuFF8Light()
             floorData[0] = floorData[1] = floorData[2] = floorData[3] = 0.0f;   // (the camera under the floor, or no rotation: none)
     }
     // (review: the floor checked against the characters' own vertices each frame: a stage whose floor isn't at height 0
-    // would put them under it, and the floor would take their lower bodies; more than 2% of them under it: no floor)
+    // would put their legs under it, and the floor would take their lower bodies; more than 6% of them a tenth beyond it:
+    // no floor. 2% and a twentieth refused the grassland's own floor: pieces of it pass for characters, just under 0)
     uint32_t checked = 0, under = 0;
     for (uint32_t i = 0; floorData[3] > 0.0f && i < samples; i++)
     {
@@ -479,10 +480,10 @@ void Renderer::ffuFF8Light()
         const float rx = ((sample.x - lens[2]) / lens[0] - cam[1]) / cam[0], ry = ((sample.y - lens[3]) / lens[1] - cam[2]) / cam[0];
         const float down = floorData[0] * rx + floorData[1] * ry + floorData[2];
         checked++;
-        if (down > 1e-6f && sample.view > 1.05f * floorData[3] / down) under++;
+        if (down > 1e-6f && sample.view > 1.1f * floorData[3] / down) under++;
     }
     static uint32_t refusedFrames = 0;
-    if (checked >= 16 && under * 50 > checked)
+    if (checked >= 16 && under * 50 > checked * 3)
     {
         if (refusedFrames++ % 600 == 0)
             ffnx_info("FFU FF8 lighting: the floor at height 0 refused (%u of %u character vertices under it): no floor\n", under, checked);
