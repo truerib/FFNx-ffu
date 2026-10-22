@@ -332,6 +332,7 @@ namespace
     // similarity (a turn, a scale and a shift), and the guest's frame is added over our 3D through it, under our HUD: at
     // the first flat draw after a battle frame's 3D (FF7: its menus; FF8: its HUD), else at the frame's end.
     bool guestSeen3D = false, guestLaid = false;
+    uint32_t guestFrame = 0;   // our frames, counted at each frame's end (ffuGuestLayersFrameEnd)
 
     void layGuest(Guest &guest)
     {
@@ -359,9 +360,9 @@ namespace
         guestLaid = true;
         for (auto &guest : guests)
         {
-            if (!strcmp(guest.game, ownGame()) || guest.placedFrame == UINT32_MAX || newRenderer.ffuLastFrame - guest.placedFrame > 30)
+            if (!strcmp(guest.game, ownGame()) || guest.placedFrame == UINT32_MAX || guestFrame - guest.placedFrame > 30)
                 continue;   // (our own, or no seat of that game placed in our battle lately)
-            receive(guest, newRenderer.ffuLastFrame);
+            receive(guest, guestFrame | 0x80000000u);   // (its own count: never one ffuLayerLive's frame numbers can hold)
             const bool battle = !strncmp(guest.header.id + 3, "_battle", 7);
             const bool laid = battle && guest.header.anchored && fresh(guest);
             if (laid != guest.lastLaid)
@@ -736,7 +737,7 @@ extern "C" __declspec(dllexport) void ffu_guest_layer_place(const char *game, co
         if (!strncmp(game, guest.game, 3) && strcmp(guest.game, ownGame()))
         {
             ::memcpy(guest.hostAnchors, host, sizeof(guest.hostAnchors));
-            guest.placedFrame = newRenderer.ffuLastFrame;
+            guest.placedFrame = guestFrame;
         }
 }
 
@@ -766,4 +767,5 @@ void ffuGuestLayersFrameEnd()
 {
     if (!guestLaid && guestSeen3D && getmode_cached()->driver_mode == MODE_BATTLE) layGuests();
     guestLaid = guestSeen3D = false;
+    ++guestFrame;
 }
