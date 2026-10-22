@@ -50,6 +50,7 @@ namespace
     // (item 3's cinematics: depth of field and motion blur while a summon or Limit plays, off unless told)
     constexpr int LOOK_DOF = 1024, LOOK_MOTION = 2048;
     std::atomic<float> spellLevel{1.0f};   // its slider (ffu_look_spell)
+    std::atomic<float> cinematicLevel{1.0f};   // the cinematics' slider (ffu_look_cinematic)
     // Richard's sliders (the hub's pause menu, Rule 105): multiples of the look as built: the main light, the light from
     // all around, contact shading, the glow, the haze (ffu_look_levels)
     std::atomic<float> levels[5] = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };
@@ -98,6 +99,13 @@ extern "C" __declspec(dllexport) void ffu_look_levels(float light, float fill, f
 extern "C" __declspec(dllexport) void ffu_look_spell(float level)
 {
     spellLevel.store(level >= 0.0f && level <= 2.0f ? level : 1.0f);
+}
+
+// The cinematics' slider (the bridges' look.c, from the hub's "cinematic_amount"): a multiple of their depth of field and
+// motion blur as built, 0-2.
+extern "C" __declspec(dllexport) void ffu_look_cinematic(float level)
+{
+    cinematicLevel.store(level >= 0.0f && level <= 2.0f ? level : 1.0f);
 }
 
 bool ffuLookSpell()
@@ -225,6 +233,7 @@ float ffuLookDebug()
 float ffuLookLevel(int which)
 {
     if (which == 5) return spellLevel.load();
+    if (which == 6) return cinematicLevel.load();
     return which >= 0 && which < 5 ? levels[which].load() : 1.0f;
 }
 

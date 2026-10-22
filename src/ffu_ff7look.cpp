@@ -73,7 +73,8 @@ namespace
     // The cinematics (Richard's next list, item 3): while a summon or Limit plays, depth of field (the blur at infinity and
     // its most, shares of the picture's width) and motion blur (its share of a frame's move, and its most); a frame whose
     // camera jumped further than CUT (clip units at what it looks at) is a cut, never blurred
-    constexpr float DOF_APERTURE = 0.007f, DOF_MOST = 0.01f, MOTION_SHARE = 1.0f, MOTION_MOST = 0.04f, CUT = 0.3f;
+    // (at the cinematics' slider's 1; 0.007 and 0.01 blurred a near character by 30 pixels at 4K: FF9's first pair)
+    constexpr float DOF_APERTURE = 0.005f, DOF_MOST = 0.008f, MOTION_SHARE = 1.0f, MOTION_MOST = 0.04f, CUT = 0.3f;
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
@@ -399,8 +400,9 @@ void Renderer::ffuFF7Pass()
     const float cineAt = cineState > 0 ? cineWeight() : 0.0f;
     float reproject[16];
     const bool moved = cineMotionThisFrame(n, internalState.viewMatrix, internalState.isViewMatrixSet, reproject);   // (kept every frame with a cinematics switch on)
-    const float dof = ffuLookDof() && cineAt > 0.0f ? DOF_APERTURE * cineAt : 0.0f;
-    const bool motion = ffuLookMotion() && cineAt > 0.0f && moved;
+    const float cineLevel = ffuLookLevel(6);   // (Richard's slider)
+    const float dof = ffuLookDof() && cineAt > 0.0f ? DOF_APERTURE * cineAt * cineLevel : 0.0f;
+    const bool motion = ffuLookMotion() && cineAt > 0.0f && moved && ffuLookLevel(6) > 0.0f;
     const bool look = haze || barsAt > 0.0f || contact > 0.0f || spell > 0.0f || rim > 0.0f || shaking;
     if (!look && dof <= 0.0f && !motion)
         return;
@@ -469,12 +471,12 @@ void Renderer::ffuFF7Pass()
         static const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
         bgfx::setUniform(cineReproject, motion ? reproject : identity);
         bgfx::setUniform(cineDepth, depthRows);
-        const float focusData[4] = { focus, dof, DOF_MOST * cineAt, which };
+        const float focusData[4] = { focus, dof, DOF_MOST * cineAt * cineLevel, which };
         bgfx::setUniform(cineFocus, focusData);
         const float frameData[4] = { barHeight, ffuLookSplit(), ffuGlowWanted() ? 1.0f : 0.0f, aspect };
         bgfx::setUniform(cineFrame, frameData);
         bgfx::setUniform(cineShake, shake);
-        const float motionData[4] = { MOTION_SHARE * cineAt, MOTION_MOST, texel[0], texel[1] };
+        const float motionData[4] = { MOTION_SHARE * cineAt * cineLevel, MOTION_MOST, texel[0], texel[1] };
         bgfx::setUniform(cineMotion, motionData);
         bgfx::setTexture(0, cineScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         bgfx::setTexture(1, cineDepthMap, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
