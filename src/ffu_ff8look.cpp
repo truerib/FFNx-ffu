@@ -99,8 +99,53 @@ namespace
         float ownMin = 2.0f, ownMax = -1.0f, stageMin = 2.0f, stageMax = -1.0f, slope = 0.0f, offset = 0.0f;
         bool stageWay = false, mixed = false;   // (the stage's draws made in more than one way)
     } depths;
+    // A diagnostic (one battle frame in 600): every tenth 3D draw's first vertices logged with their place in FF8's
+    // battle world (its camera's matrix and translation), and the heights of every fourth vertex counted in 50-unit bands.
+    bool recording = false;
+    uint32_t drawsThisFrame = 0;
+    constexpr int BANDS = 160;
+    uint32_t heights[BANDS] = {};
 
     struct QuadVertex { float x, y, z, u, v; };
+}
+
+// A vertex's height in FF8's battle world (y down), from its screen place and 1 / rhw as the view depth, FF8's lens and its
+// battle camera (view = translation + matrix * world, the matrix int16 4.12 at BATTLE_VIEW_MATRIX, its translation three
+// int32 after it, as FF8's LookAt 0x50CB40 writes them)
+static float worldHeight(const struct nvertex &vertex)
+{
+    const float scaleX = *(const float *)SSIGPU_SCALE_X * 8.0f, scaleY = *(const float *)SSIGPU_SCALE_Y * 8.0f;
+    const float lensH = float(*(const uint32_t *)GTE_H & 0xFFFF);
+    if (lensH <= 0.0f || !(scaleX > 0.0f) || !(scaleY > 0.0f)) return 0.0f;
+    const float Z = 1.0f / vertex.color.w;
+    const float view[3] = {
+        ((vertex._.x - *(const float *)SSIGPU_OFFSET_X) / scaleX - float(*(const int16_t *)GTE_OFX)) / lensH * Z,
+        ((vertex._.y - *(const float *)SSIGPU_OFFSET_Y) / scaleY - float(*(const int16_t *)GTE_OFY)) / lensH * Z, Z };
+    const int16_t *matrix = (const int16_t *)BATTLE_VIEW_MATRIX;
+    const int32_t *translation = (const int32_t *)(BATTLE_VIEW_MATRIX + 0x14);
+    float height = 0.0f;
+    for (int row = 0; row < 3; row++)
+        height += matrix[row * 3 + 1] / 4096.0f * (view[row] - float(translation[row]));
+    return height;
+}
+
+static void recordDraw(const struct nvertex *vertices, uint32_t vertexcount)
+{
+    for (uint32_t i = 0; i < vertexcount; i += 4)
+        if (vertices[i].color.w > 0.0f && vertices[i].color.w < 0.5f)
+        {
+            const int band = int(floorf(worldHeight(vertices[i]) / 50.0f)) + BANDS / 2;
+            heights[std::clamp(band, 0, BANDS - 1)]++;
+        }
+    if (drawsThisFrame++ % 10 != 0)
+        return;
+    char line[512];
+    int used = _snprintf(line, sizeof(line), "FFU FF8 depth diagnostic: draw %u, %u vertices, stage globals %.6g %.6g %.6g:", drawsThisFrame - 1,
+                         vertexcount, *(const float *)STAGE_SLOPE, *(const float *)STAGE_OFFSET_A, *(const float *)STAGE_OFFSET_B);
+    for (uint32_t i = 0; i < vertexcount && i < 3 && used > 0 && used < int(sizeof(line)) - 80; i++)
+        used += _snprintf(line + used, sizeof(line) - used, " (%.1f, %.1f, 1/rhw %.1f, z %.6f, height %.0f)", vertices[i]._.x, vertices[i]._.y,
+                          vertices[i].color.w > 0.0f ? 1.0f / vertices[i].color.w : 0.0f, vertices[i]._.z, worldHeight(vertices[i]));
+    ffnx_info("%s\n", line);
 }
 
 // How FF8 wrote this 3D draw's depths (sub_461220), vertex by vertex: its own way, or the stage's from its globals now
@@ -185,6 +230,7 @@ bool ffuFF8LookDraw(uint32_t vertextype, const struct nvertex *vertices, uint32_
     if (!flat)
     {
         countDepths(vertices, vertexcount);
+        if (recording) recordDraw(vertices, vertexcount);
         for (uint32_t i = 0; i < vertexcount; i += 4)
         {
             const float rhw = vertices[i].color.w, z = vertices[i]._.z;
@@ -208,6 +254,25 @@ void ffuFF8LookFrame()
         newRenderer.ffuFF8Prepare();
     if (ff8 && !passedThisFrame && samples > 0 && getmode_cached()->driver_mode == MODE_BATTLE && (ffuLookLighting() || ffuLookAtmosphere()) && ffuLookShown())
         newRenderer.ffuFF8Light();
+    if (recording)
+    {
+        // (the five commonest heights: a flat floor is many vertices at one height)
+        char line[400];
+        int used = _snprintf(line, sizeof(line), "FFU FF8 depth diagnostic: heights (50-unit bands, y down)");
+        for (int k = 0; k < 5 && used > 0 && used < int(sizeof(line)) - 40; k++)
+        {
+            int best = 0;
+            for (int b = 1; b < BANDS; b++) if (heights[b] > heights[best]) best = b;
+            if (heights[best] == 0) break;
+            used += _snprintf(line + used, sizeof(line) - used, " %d..%d: %u;", (best - BANDS / 2) * 50, (best - BANDS / 2 + 1) * 50, heights[best]);
+            heights[best] = 0;
+        }
+        ffnx_info("%s camera translation %d %d %d\n", line, ((const int32_t *)(BATTLE_VIEW_MATRIX + 0x14))[0],
+                  ((const int32_t *)(BATTLE_VIEW_MATRIX + 0x14))[1], ((const int32_t *)(BATTLE_VIEW_MATRIX + 0x14))[2]);
+    }
+    recording = ff8 && getmode_cached()->driver_mode == MODE_BATTLE && passes % 600 == 300 && passedThisFrame;
+    drawsThisFrame = 0;
+    memset(heights, 0, sizeof(heights));
     passedThisFrame = false;
     sumX = 0.0;
     samples = 0;
