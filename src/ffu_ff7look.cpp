@@ -49,7 +49,7 @@ float ffuLookLevel(int which);
 
 namespace
 {
-    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f, CINEMA_ASPECT = 2.2f;
+    constexpr float HAZE_MOST = 0.5f, HAZE_START = 1.5f, CINEMA_ASPECT = 2.2f;   // (0.35 was too faint to see: Richard 2026-10-22)
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable

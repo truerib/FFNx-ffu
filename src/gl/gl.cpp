@@ -332,6 +332,8 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	void ffuSurveyDraw(uint32_t, const struct nvertex *, uint32_t, uint32_t, uint32_t, uint32_t);
 	ffuSurveyDraw(vertextype, vertices, vertexcount, current_state.blend_mode, current_state.depthtest, current_state.depthmask);
 	// Final Fantasy Universe: FF8's battle lighting before its first flat draw (ffu_ff8look.cpp)
+	// Final Fantasy Universe: the glow's copy of the picture before the frame's first effect (ffu_glow.cpp)
+	if (current_state.blend_mode == 1 || current_state.blend_mode == 3) newRenderer.ffuGlowBeforeEffect();
 	bool ffuFF8LookDraw(uint32_t, const struct nvertex *, uint32_t);
 	if (ffuFF8LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF8Light();
 	bool ffuFF7LookDraw(uint32_t, const struct nvertex *, uint32_t);   // FF7's haze and cinematic bars (ffu_ff7look.cpp)

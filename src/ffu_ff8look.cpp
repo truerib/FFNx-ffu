@@ -51,12 +51,14 @@ namespace
     constexpr uint32_t GTE_H = 0x1CA92E4, GTE_OFX = 0x1CA92DE, GTE_OFY = 0x1CA92E2;
     constexpr uint32_t SSIGPU_SCALE_X = 0xB7CC14, SSIGPU_SCALE_Y = 0xB7CC18, SSIGPU_OFFSET_X = 0x1CA89E0, SSIGPU_OFFSET_Y = 0x1CA89E4;
     // The look's balance (the same as FF9's: mods/ff9-globe BattleScene.cs): ambient, main light, wrap, contact
-    constexpr float AMBIENT = 0.5f, KEY = 0.85f, WRAP = 0.35f, CONTACT = 0.6f;
+    // (stronger than FF9's: FF8's own colours carry their own soft light; Richard 2026-10-22: "I can't see any other
+    // changes": a surface turned to the light about 24% brighter, one turned away or in shadow about 35% darker)
+    constexpr float AMBIENT = 0.35f, KEY = 1.1f, WRAP = 0.35f, CONTACT = 0.85f;
     // The haze (as FF9's outdoors: BattleScene.cs): from half again the depth FF8's 3D stands at, full (its most) at its
     // backdrop (the sky dome: FF8 draws its sky as far 3D, with depth), toward the backdrop's own colour. The shader finds
     // the backdrop from the picture's top (as FF7's does: never from one far vertex, which a summon moves); the backdrop
     // itself is neither lit nor hazed.
-    constexpr float HAZE_MOST = 0.35f, HAZE_START = 1.5f;
+    constexpr float HAZE_MOST = 0.5f, HAZE_START = 1.5f;
     // FF8's battle camera: its view matrix as FF8's LookAt writes it each frame (0x503230 -> 0x50CB40: int16 rows,
     // 4.12, view = M * world; side-session research 2026-10-22 battle-camera-stick.md), so the main light stays put in
     // FF8's battle world as its cameras swing. Toward the light in that world (y down): high, from one side.

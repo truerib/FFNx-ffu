@@ -20,7 +20,7 @@
 //
 // Lighting (FF7): FFNx's own lighting (enable_lighting) already lights FF7's battles and casts their shadows. The look
 // gives it the shared engine's balance, the same as FF9's battles (mods/ff9-globe BattleScene.cs): matte surfaces
-// (metallic 0, low specular, rough), the main light 1.7 times the ambient, at the overall brightness FFNx's installed
+// (metallic 0, low specular, rough), the main light 2.6 times the ambient, about the overall brightness FFNx's installed
 // config gives (its light 4.0 at metallic 0.5 and ambient 1.0: a surface half turned to the light keeps its colour).
 // Off: FFNx's installed config again (lighting/config.toml, its per-battle groups too). Nothing changes outside
 // battles, and nothing at all when FFNx's lighting wasn't on at start (it is set up only then).
@@ -32,6 +32,7 @@
 #include "globals.h"
 #include "lighting.h"
 #include "log.h"
+#include "renderer.h"
 
 namespace
 {
@@ -113,7 +114,8 @@ void ffuFF7LookFrameEnd();
 
 namespace
 {
-    constexpr float METALLIC = 0.0f, SPECULAR = 0.1f, ROUGHNESS = 0.85f, LIGHT = 1.85f, AMBIENT = 1.09f;
+    // (the main light 2.6 times the ambient: Richard 2026-10-22, "I can't see any other changes", at 1.7 times)
+    constexpr float METALLIC = 0.0f, SPECULAR = 0.1f, ROUGHNESS = 0.85f, LIGHT = 2.3f, AMBIENT = 0.9f;
     std::atomic<bool> shown{true};   // the game's window is shown (a hidden battle, a mixed party's guest, gets no look)
 
     bool lookWanted()
@@ -154,6 +156,8 @@ bool ffuLookShown()
 void ffuLookFrame()
 {
     shown.store(gameHwnd && IsWindowVisible(gameHwnd) && !IsIconic(gameHwnd));
+    if (getmode_cached()->driver_mode != MODE_BATTLE)
+        newRenderer.ffuGlowPrepare();   // (the glow's copy made outside battles: Rules 59, 89)
     ffuSurveyFrame();
     ffuFF8LookFrame();
     ffuFF7LookFrame();
@@ -216,6 +220,6 @@ void ffuLookAfterLighting()
     putAmbient = AMBIENT * levels[1].load();
     put(METALLIC, SPECULAR, ROUGHNESS, putLight, putAmbient);
     if (!tuned)
-        ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 1.7x the ambient)\n");
+        ffnx_info("ffu-look: FF7's battle lighting in the shared look (matte, main light 2.6x the ambient)\n");
     tuned = true;
 }

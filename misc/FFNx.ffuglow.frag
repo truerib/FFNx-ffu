@@ -15,7 +15,8 @@
 
 // Final Fantasy Universe: the battle look's glow (src/ffu_glow.cpp, docs/battle-look.md "Glow"): only the game's own
 // effects glow. In a battle FFNx's frame keeps alpha only where additive draws (the effects) added it (the other draws
-// clear it), so: 0 extract the bright part there; 1 blur it along one axis (9 taps); 2 the two blurs, added onto the
+// clear it), so: 0 extract the bright part of what the effects added there (the picture less a copy from just before the
+// frame's first effect, s_ffuGlowB); 1 blur it along one axis (9 taps); 2 the two blurs, added onto the
 // picture by the caller's ONE+ONE blend, in the frame's own gamma numbers, as the games' PlayStation frame buffers added
 // (Rule 110). 3: the battle look's anti-aliasing, FXAA (the console form) on the whole frame, alpha kept.
 
@@ -55,11 +56,14 @@ void main()
     vec2 uv = v_texcoord0;
     if (u_ffuGlow.x < 0.5)
     {
+        // What the effects added: the picture less the picture just before the frame's first effect, where the effects
+        // drew (alpha), and bright enough
         vec4 c = texture2D(s_ffuGlowA, uv);
+        vec3 added = max(c.rgb - texture2D(s_ffuGlowB, uv).rgb, vec3_splat(0.0));
         float effect = clamp(c.a * 3.0, 0.0, 1.0);
-        float peak = max(c.r, max(c.g, c.b));
+        float peak = max(added.r, max(added.g, added.b));
         float keep = clamp((peak - u_ffuGlowParams.x) / u_ffuGlowParams.y, 0.0, 1.0);
-        gl_FragColor = vec4(c.rgb * effect * keep * keep, 1.0);
+        gl_FragColor = vec4(added * effect * keep * keep, 1.0);
     }
     else if (u_ffuGlow.x < 1.5)
     {
