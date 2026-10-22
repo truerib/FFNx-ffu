@@ -40,6 +40,7 @@
 bool ffuLookGlow();   // ffu_look.cpp
 bool ffuLookSpell();
 bool ffuLookDof();
+bool ffuFF7Cinematic();   // ffu_ff7look.cpp (FF7's summons and Limits only: FF8 has no cinematics yet)
 bool ffuLookShown();
 float ffuLookLevel(int which);
 float ffuLookSplit();
@@ -167,7 +168,7 @@ bool Renderer::ffuGlowWanted()
 {
     // (the mask and its blur serve the glow and the spells' light, each with its own switch; the mask also keeps the
     // effects sharp under the cinematics' depth of field: ffu_ff7look.cpp)
-    return (ffuLookGlow() || ffuLookSpell() || ffuLookDof()) && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
+    return (ffuLookGlow() || ffuLookSpell() || (ffuLookDof() && ffuFF7Cinematic())) && ffuLookShown() && !internalState.bIsHDR && enable_antialiasing == 0 && getmode_cached()->driver_mode == MODE_BATTLE
         && !ffuLayerActive && !ffuBattleLayerFrame && programState >= 0;
 }
 

@@ -150,13 +150,17 @@ bool ffuLookShown();
 // The impact (Richard's next list, item 3: "a small camera shake ... on big hits and limits"; docs/battle-look.md
 // "Impact"): a unit's HP falling by a tenth of its most or more between frames (a quarter: a hard one), and FF7's summons
 // and Limits beginning, shake the battle's 3D picture in FF7's and FF8's passes (before their menus: those stay still).
-// FF7's units: battle_actor_vars, 10 x 0x68 from 0x9AB0DC, HP +0x2C, its most +0x30; FF8's: 7 x 0xD0 from 0x1D27B10, HP
-// +0x18, its most +0x1C (the bridges' own reads: shadow_ff7.c, shadow_ff8.c). FF9's is FFUGlobe's (BattleImpact.cs).
+// FF7's units: FFNx's battle_context's actor_vars (10, HP and its most); FF8's: 7 x 0xD0 from FFNx's
+// battle_char_struct_dword_1D27B10, HP +0x18, its most +0x1C (the bridges' own reads: shadow_ff7.c, shadow_ff8.c). A
+// battle's first 30 frames only take its units' HP (the last battle's, or a save's, left in the tables: review). FF9's is
+// FFUGlobe's (BattleImpact.cs).
 namespace
 {
     constexpr float HIT = 0.1f, HARD_HIT = 0.25f, SHAKE = 0.006f, HARD_SHAKE = 0.012f, SHAKE_TIME = 0.3f, HARD_SHAKE_TIME = 0.45f;
     int impactHp[10];
-    bool impactSeen = false, impactCinema = false;
+    bool impactCinema = false;
+    int impactFrames = 0;   // this battle's frames seen (0: none)
+    constexpr int IMPACT_SETTLE = 30;
     ULONGLONG shakeFrom = 0;
     float shakeFor = 0.0f, shakeSize = 0.0f;
 
@@ -169,25 +173,35 @@ namespace
     {
         if (!ffuLookImpact() || !ffuLookShown() || getmode_cached()->driver_mode != MODE_BATTLE)
         {
-            impactSeen = impactCinema = false;
+            impactFrames = 0;
+            impactCinema = false;
             return;
         }
+        const uint8_t *ff8Table = ff8 ? (const uint8_t *)ff8_externals.battle_char_struct_dword_1D27B10 : nullptr;
+        if (ff8 ? !ff8Table : !ff7_externals.battle_context)
+            return;
+        static bool told = false;
+        if (!told)
+        {
+            told = true;
+            ffnx_info("FFU impact: the units' table at 0x%X\n", ff8 ? unsigned(uintptr_t(ff8Table)) : unsigned(uintptr_t(ff7_externals.battle_context->actor_vars)));
+        }
         const int units = ff8 ? 7 : 10;
-        const uint8_t *table = (const uint8_t *)(ff8 ? 0x1D27B10u : 0x9AB0DCu);
-        const int stride = ff8 ? 0xD0 : 0x68, hpAt = ff8 ? 0x18 : 0x2C, mostAt = ff8 ? 0x1C : 0x30;
+        const bool settled = impactFrames >= IMPACT_SETTLE;
+        if (impactFrames < IMPACT_SETTLE) impactFrames++;
         float strongest = 0.0f;
         for (int i = 0; i < units; i++)
         {
-            const int hp = *(const int *)(table + stride * i + hpAt), most = *(const int *)(table + stride * i + mostAt);
-            if (impactSeen && most > 0 && hp >= 0 && hp < impactHp[i] && impactHp[i] <= most)
+            const int hp = ff8 ? *(const int *)(ff8Table + 0xD0 * i + 0x18) : ff7_externals.battle_context->actor_vars[i].currentHP;
+            const int most = ff8 ? *(const int *)(ff8Table + 0xD0 * i + 0x1C) : ff7_externals.battle_context->actor_vars[i].maxHP;
+            if (settled && most > 0 && hp >= 0 && hp < impactHp[i] && impactHp[i] <= most)
                 strongest = std::max(strongest, float(impactHp[i] - hp) / float(most));
             impactHp[i] = hp;
         }
-        impactSeen = true;
         if (!ff8)
         {
             const bool cinema = ffuFF7Cinematic();
-            if (cinema && !impactCinema) strongest = std::max(strongest, HARD_HIT);   // (a summon's or a Limit's start)
+            if (cinema && !impactCinema && settled) strongest = std::max(strongest, HARD_HIT);   // (a summon's or a Limit's start)
             impactCinema = cinema;
         }
         if (strongest < HIT)

@@ -367,7 +367,7 @@ void Renderer::ffuFF7Pass()
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
     if ((!haze && barsAt <= 0.0f && !ffuLookLighting() && !ffuLookSpell() && !ffuLookRim() && !ffuLookShaking() && !ffuLookDof() && !ffuLookMotion()) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
-        || backendViewId > 240 || !ffuFF7Ready())
+        || backendViewId > 230 || !ffuFF7Ready())   // (up to 9 views of its own, below the glow's 241 on)
         return;
     ffuFF7Prepare();
     if (!bgfx::isValid(target) || bgfx::getAvailTransientVertexBuffer(24, quadLayout) < 24)
