@@ -338,7 +338,11 @@ void gl_draw_indexed_primitive(uint32_t primitivetype, uint32_t vertextype, stru
 	if (ffuFF7LookDraw(vertextype, vertices, vertexcount)) newRenderer.ffuFF7Pass();
 	bool ffuGuestLayersDraw(uint32_t, const struct nvertex *, uint32_t);   // a mixed party's guest effects (ffu_layer.cpp)
 	void ffuGuestLayersCompose();
-	if (ffuGuestLayersDraw(vertextype, vertices, vertexcount)) ffuGuestLayersCompose();
+	if (ffuGuestLayersDraw(vertextype, vertices, vertexcount))
+	{
+		ffuGuestLayersCompose();
+		newRenderer.doScissorTest(clip != 0);   // (this draw's own scissor back: the quad's draw turned it off)
+	}
 
 	bool isLightingEnabledTexture = true;
 

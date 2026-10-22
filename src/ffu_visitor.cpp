@@ -236,10 +236,11 @@ void ffuVisitorDrawLayerQuad(uint16_t texture, const float *xy, float u0, float 
 {
 	if (texture == 0xFFFF || xy == nullptr) return;
 	const float uv[8] = { u0, v0, u1, v0, u1, v1, u0, v1 };
-	vertexBuffer.resize(4);
+	static nvertex quadVertices[4];   // (its own: never the arrays a visitor's draw is still reading)
+	static WORD quadIndices[6] = { 0, 1, 2, 0, 2, 3 };
 	for (uint32_t k = 0; k < 4; k++)
 	{
-		nvertex& to = vertexBuffer[k];
+		nvertex& to = quadVertices[k];
 		memset(&to, 0, sizeof(to));
 		to._.x = xy[k * 2];
 		to._.y = xy[k * 2 + 1];
@@ -250,18 +251,16 @@ void ffuVisitorDrawLayerQuad(uint16_t texture, const float *xy, float u0, float 
 		to.u = uv[k * 2];
 		to.v = uv[k * 2 + 1];
 	}
-	static const WORD quad[6] = { 0, 1, 2, 0, 2, 3 };
-	indexBuffer.assign(quad, quad + 6);
-
 	struct driver_state saved;
 	gl_save_state(&saved);
 	plainTexture(texture);
+	current_state.fb_texture = 0;   // (a plain texture: never flipped as a framebuffer copy)
 	gl_set_blend_func(BLEND_ADD);
 	internal_set_renderstate(V_NOCULL, 1, nullptr);
 	internal_set_renderstate(V_DEPTHTEST, 0, nullptr);
 	internal_set_renderstate(V_DEPTHMASK, 0, nullptr);
 	internal_set_renderstate(V_ALPHATEST, 0, nullptr);
-	gl_draw_indexed_primitive(RendererPrimitiveType::PT_TRIANGLES, TLVERTEX, vertexBuffer.data(), nullptr, 4,
-		indexBuffer.data(), 6, nullptr, nullptr, nullptr, 0, true);
+	gl_draw_indexed_primitive(RendererPrimitiveType::PT_TRIANGLES, TLVERTEX, quadVertices, nullptr, 4,
+		quadIndices, 6, nullptr, nullptr, nullptr, 0, true);
 	gl_load_state(&saved);
 }

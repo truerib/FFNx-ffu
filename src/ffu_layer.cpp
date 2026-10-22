@@ -30,6 +30,7 @@
 #include <cstring>
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 
@@ -39,7 +40,7 @@
 #include "utils.h"
 #include "common.h"
 
-extern int wide_viewport_x, wide_viewport_width;   // widescreen.cpp
+extern int wide_viewport_x, wide_viewport_width, wide_game_height;   // widescreen.cpp
 void ffuVisitorDrawLayerQuad(uint16_t texture, const float *xy, float u0, float v0, float u1, float v1);   // ffu_visitor.cpp
 void ffuGuestLayersFrameEnd();   // below: a guest's battle layer laid into ours
 
@@ -153,7 +154,7 @@ namespace
         for (int k = 0; k < 4; k += 2)
         {
             meta.anchors[k] = (ask->anchors[k] - left) * layerWidth / width;
-            meta.anchors[k + 1] = ask->anchors[k + 1] * layerHeight / (float)game_height;
+            meta.anchors[k + 1] = ask->anchors[k + 1] * layerHeight / (widescreen_enabled ? (float)wide_game_height : (float)game_height);
         }
         meta.anchored = 1;
     }
@@ -339,9 +340,11 @@ namespace
         const LayerHeader &h = guest.header;
         const float gx = h.anchors[2] - h.anchors[0], gy = h.anchors[3] - h.anchors[1];
         const float hx = guest.hostAnchors[2] - guest.hostAnchors[0], hy = guest.hostAnchors[3] - guest.hostAnchors[1];
-        const float gg = gx * gx + gy * gy;
-        if (gg < 4.0f || hx * hx + hy * hy < 1.0f) return;   // (anchors on top of each other: no turn or scale to take)
+        const float gg = gx * gx + gy * gy, hh = hx * hx + hy * hy;
+        if (!(gg >= 400.0f && hh >= 400.0f)) return;   // (anchors too close to take a turn and a scale by, or not numbers)
         const float a = (hx * gx + hy * gy) / gg, b = (hy * gx - hx * gy) / gg;   // (host = a,b x guest: complex division)
+        const float scale = sqrtf(a * a + b * b);
+        if (!(scale >= 0.25f && scale <= 4.0f)) return;   // (a camera looking along the two: the frame would be thrown about)
         auto place = [&](float x, float y, float *out)
         {
             const float dx = x - h.anchors[0], dy = y - h.anchors[1];
@@ -762,10 +765,10 @@ void ffuGuestLayersCompose()
     layGuests();
 }
 
-// Each frame's end (Renderer::ffuBattleLayerFrameEnd): a frame with 3D and no flat draw after it has them added now.
+// Each frame's end (Renderer::ffuBattleLayerFrameEnd, after the frame is submitted): a frame with 3D and no flat draw
+// after it (a summon's) has no guest layer (drawing now would land in the next frame's views: Sonnet review).
 void ffuGuestLayersFrameEnd()
 {
-    if (!guestLaid && guestSeen3D && getmode_cached()->driver_mode == MODE_BATTLE) layGuests();
     guestLaid = guestSeen3D = false;
     ++guestFrame;
 }
