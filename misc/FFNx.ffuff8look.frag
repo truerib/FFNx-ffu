@@ -32,18 +32,17 @@ SAMPLER2D(s_ff8Depth, 1);
 uniform vec4 u_ff8Lens;    // ssigpu scale x, y; offset x, y (FF8's screen = offset + scale * (of + H * X / Z))
 uniform vec4 u_ff8Cam;     // GTE H, OFX, OFY; the wide viewport's left (game units)
 uniform vec4 u_ff8Frame;   // the picture's width and height (game units); one texel (uv)
-uniform vec4 u_ff8Depth;   // FF8's own depth = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
-uniform vec4 u_ff8Stage;   // the stage's depth = x * view z + y, the depths from z up (w 1) or down (w -1); w 0: none this frame
+uniform vec4 u_ff8Depth;   // FF8's depth for all but its stage = x * view z + y; z: the glow's mask in alpha (1) or not (0); w: the lighting on (1)
+uniform vec4 u_ff8Stage;   // its stage's depth = x * view z + y, the depths from z up; w 1 (0: not told apart this frame)
 uniform vec4 u_ff8Light;   // toward the main light (view space: x right, y down, z ahead); w: its strength
 uniform vec4 u_ff8Look;    // x ambient, y 1 / (1 + wrap), z exposure, w contact strength
 uniform vec4 u_ff8Haze;    // the haze: x where it starts (view depth), z its most (0: none); y the test split (FFU_LOOK_SPLIT)
 
-// The view depth of FF8's depth z: its stage's own way where the stage's depths lie (FF8 pushes the stage back:
-// ffu_ff8look.cpp), its characters' and effects' elsewhere.
+// The view depth of FF8's depth z: on its stage's line where the stage's depths lie (FF8 pushes the stage back behind
+// everything: ffu_ff8look.cpp), on its characters' line elsewhere.
 float viewDepth(float z)
 {
-    bool stage = u_ff8Stage.w > 0.5 ? z >= u_ff8Stage.z : (u_ff8Stage.w < -0.5 && z <= u_ff8Stage.z);
-    return stage ? (z - u_ff8Stage.y) / u_ff8Stage.x : (z - u_ff8Depth.y) / u_ff8Depth.x;
+    return u_ff8Stage.w > 0.5 && z >= u_ff8Stage.z ? (z - u_ff8Stage.y) / u_ff8Stage.x : (z - u_ff8Depth.y) / u_ff8Depth.x;
 }
 
 vec3 viewAt(vec2 uv)
@@ -111,50 +110,54 @@ void main()
     }
     vec2 t = u_ff8Frame.zw;
     vec3 p = viewAt(uv);
-    vec3 px = viewAt(uv + vec2(t.x, 0.0)), nx = viewAt(uv - vec2(t.x, 0.0));
-    vec3 py = viewAt(uv + vec2(0.0, t.y)), ny = viewAt(uv - vec2(0.0, t.y));
-    vec3 dx = abs(px.z - p.z) < abs(p.z - nx.z) ? px - p : p - nx;
-    vec3 dy = abs(py.z - p.z) < abs(p.z - ny.z) ? py - p : p - ny;
-    vec3 n = normalize(cross(dx, dy));
-    if (dot(n, p) > 0.0) n = -n;   // toward the camera
-
-    vec3 l = normalize(u_ff8Light.xyz);
-    float ndl = dot(n, l);
-    float diffuse = clamp(ndl * u_ff8Look.y + (1.0 - u_ff8Look.y), 0.0, 1.0);
-
-    // The main light's shadow: 16 steps toward it through FF8's depth (what stands nearer the camera on that path,
-    // and not far behind it, is in the way), fading with the step.
-    float shadow = 0.0;
-    vec3 start = p + n * (0.004 * p.z);
-    for (int k = 1; k <= 16; k++)
+    vec3 shaded = scene.rgb;   // (the haze alone: FF8's own colour)
+    if (u_ff8Depth.w > 0.5)
     {
-        vec3 q = start + l * (float(k) * 0.0035 * p.z);
-        vec2 quv = uvAt(q);
-        if (q.z <= 1.0 || quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
-        float there = viewAt(quv).z;
-        float ahead = q.z - there;
-        if (ahead > 0.002 * q.z && ahead < 0.06 * q.z) shadow = max(shadow, 1.0 - float(k) / 17.0);
-    }
-    float lit = mix(1.0, 1.0 - shadow, clamp(ndl * 5.0, 0.0, 1.0));   // (past the terminator the wrap shades it)
+        vec3 px = viewAt(uv + vec2(t.x, 0.0)), nx = viewAt(uv - vec2(t.x, 0.0));
+        vec3 py = viewAt(uv + vec2(0.0, t.y)), ny = viewAt(uv - vec2(0.0, t.y));
+        vec3 dx = abs(px.z - p.z) < abs(p.z - nx.z) ? px - p : p - nx;
+        vec3 dy = abs(py.z - p.z) < abs(p.z - ny.z) ? py - p : p - ny;
+        vec3 n = normalize(cross(dx, dy));
+        if (dot(n, p) > 0.0) n = -n;   // toward the camera
 
-    // Contact shading: 8 neighbours on a ring about 1.5% of the depth across; those in front of the surface darken it.
-    float occlusion = 0.0;
-    float radius = 0.015 * p.z;
-    vec2 ruv = abs(uvAt(p + vec3(radius, 0.0, 0.0)) - uv);
-    float ring = max(ruv.x, 2.0 * t.x);
-    for (int k = 0; k < 8; k++)
-    {
-        float a = float(k) * 0.785398;
-        vec2 o = vec2(cos(a), sin(a)) * ring * (mod(float(k), 2.0) < 0.5 ? 1.0 : 0.55);
-        vec3 s = viewAt(uv + o * vec2(1.0, u_ff8Frame.x / u_ff8Frame.y));
-        vec3 d = s - p;
-        float dist = length(d);
-        occlusion += clamp(dot(n, d / max(dist, 1e-3)) - 0.15, 0.0, 1.0) * clamp(1.0 - dist / (3.0 * radius), 0.0, 1.0);
-    }
-    float contact = 1.0 - u_ff8Look.w * occlusion / 8.0;
+        vec3 l = normalize(u_ff8Light.xyz);
+        float ndl = dot(n, l);
+        float diffuse = clamp(ndl * u_ff8Look.y + (1.0 - u_ff8Look.y), 0.0, 1.0);
 
-    float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
-    vec3 shaded = u_ff8Depth.w > 0.5 ? scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545)) : scene.rgb;   // (the haze alone: FF8's own colour)
+        // The main light's shadow: 16 steps toward it through FF8's depth (what stands nearer the camera on that path,
+        // and not far behind it, is in the way), fading with the step.
+        float shadow = 0.0;
+        vec3 start = p + n * (0.004 * p.z);
+        for (int k = 1; k <= 16; k++)
+        {
+            vec3 q = start + l * (float(k) * 0.0035 * p.z);
+            vec2 quv = uvAt(q);
+            if (q.z <= 1.0 || quv.x < 0.0 || quv.x > 1.0 || quv.y < 0.0 || quv.y > 1.0) break;
+            float there = viewAt(quv).z;
+            float ahead = q.z - there;
+            if (ahead > 0.002 * q.z && ahead < 0.06 * q.z) shadow = max(shadow, 1.0 - float(k) / 17.0);
+        }
+        float lit = mix(1.0, 1.0 - shadow, clamp(ndl * 5.0, 0.0, 1.0));   // (past the terminator the wrap shades it)
+
+        // Contact shading: 8 neighbours on a ring about 1.5% of the depth across; those in front of the surface darken it.
+        float occlusion = 0.0;
+        float radius = 0.015 * p.z;
+        vec2 ruv = abs(uvAt(p + vec3(radius, 0.0, 0.0)) - uv);
+        float ring = max(ruv.x, 2.0 * t.x);
+        for (int k = 0; k < 8; k++)
+        {
+            float a = float(k) * 0.785398;
+            vec2 o = vec2(cos(a), sin(a)) * ring * (mod(float(k), 2.0) < 0.5 ? 1.0 : 0.55);
+            vec3 s = viewAt(uv + o * vec2(1.0, u_ff8Frame.x / u_ff8Frame.y));
+            vec3 d = s - p;
+            float dist = length(d);
+            occlusion += clamp(dot(n, d / max(dist, 1e-3)) - 0.15, 0.0, 1.0) * clamp(1.0 - dist / (3.0 * radius), 0.0, 1.0);
+        }
+        float contact = 1.0 - u_ff8Look.w * occlusion / 8.0;
+
+        float light = (u_ff8Look.x * contact + u_ff8Light.w * diffuse * lit) * u_ff8Look.z;
+        shaded = scene.rgb * pow(max(vec3_splat(light), vec3_splat(1e-4)), vec3_splat(0.4545));
+    }
     // The haze (outdoors only: two or more of the sky's places seen), beyond the stage, toward the sky's colour.
     if (u_ff8Haze.z > 0.0 && backdrop < 1e29)
     {

@@ -14,9 +14,11 @@
 /****************************************************************************/
 
 // Final Fantasy Universe: FF7's battle haze and cinematic bars (src/ffu_ff7look.cpp, docs/battle-look.md), run once a
-// battle frame before FF7's menus, over the picture so far and FF7's own depth. Outdoors (FF7's backdrop, its far
-// scenery, seen near the picture's top), what stands beyond the stage fades toward the backdrop's colour; the backdrop
-// itself, effect pixels (the glow's alpha mask) and nothing drawn are left as they are; then the bars, black.
+// battle frame before FF7's menus, over the picture so far and FF7's own depth. With the lighting on, contact shading:
+// each pixel darkened by its neighbours standing in front of the surface through it (feet on the ground, creases);
+// outdoors (FF7's backdrop, its far scenery, seen near the picture's top), what stands beyond the stage fades toward
+// the backdrop's colour; the backdrop itself, effect pixels (the glow's alpha mask) and nothing drawn are left as they
+// are; then the bars, black.
 
 $input v_texcoord0
 
@@ -28,12 +30,45 @@ SAMPLER2D(s_ff7Depth, 1);
 uniform vec4 u_ff7Depth;   // FF7's depth along the view axis: (z x + y) / (z z' + w), the rows FFNx drew its 3D with
 uniform vec4 u_ff7Haze;    // x where the haze starts (view depth), y its most (0: none), z the bars' height (uv), w the mask
 uniform vec4 u_ff7Split;   // x: the test split (FFU_LOOK_SPLIT): FF7's own left of it
+uniform vec4 u_ff7Contact; // x the contact shading's strength (0: off), y its ring's radius (uv across); zw one texel (uv)
 
 float viewDepth(float d)
 {
     // (with FF7's projection both parts are negative: only a zero denominator is guarded, never its sign)
     float below = d * u_ff7Depth.z - u_ff7Depth.x;
     return (u_ff7Depth.y - d * u_ff7Depth.w) / (abs(below) < 1e-6 ? -1e-6 : below);
+}
+
+// 1 / view depth, which is affine on the screen for any flat surface
+float nearness(vec2 uv)
+{
+    float d = texture2D(s_ff7Depth, uv).x;
+    return d < 0.9999 && d > 0.0001 ? 1.0 / max(viewDepth(d), 1.0) : 0.0;
+}
+
+// Contact shading: 8 places on a ring (two radii) against the plane through this pixel (in nearness, from its nearer
+// neighbours on each axis); those standing in front of it by 0.4-15% of its depth shade it (nearer than that: another
+// thing in front, a silhouette, never a shadow on this one).
+float contactAt(vec2 uv, float here)
+{
+    vec2 texel = u_ff7Contact.zw;
+    float px = nearness(uv + vec2(texel.x, 0.0)), nx = nearness(uv - vec2(texel.x, 0.0));
+    float py = nearness(uv + vec2(0.0, texel.y)), ny = nearness(uv - vec2(0.0, texel.y));
+    float gx = abs(px - here) < abs(here - nx) ? px - here : here - nx;
+    float gy = abs(py - here) < abs(here - ny) ? py - here : here - ny;
+    vec2 ring = vec2(u_ff7Contact.y, u_ff7Contact.y * texel.y / texel.x);   // (round on the screen)
+    float occlusion = 0.0;
+    for (int k = 0; k < 8; k++)
+    {
+        float a = float(k) * 0.785398;
+        vec2 o = vec2(cos(a), sin(a)) * ring * (mod(float(k), 2.0) < 0.5 ? 1.0 : 0.55);
+        float there = nearness(uv + o);
+        if (there <= 0.0) continue;
+        float plane = here + gx * o.x / texel.x + gy * o.y / texel.y;
+        float ahead = (there - plane) / here;   // (in front of the plane: nearer)
+        occlusion += smoothstep(0.004, 0.02, ahead) * (1.0 - smoothstep(0.08, 0.15, ahead));
+    }
+    return 1.0 - u_ff7Contact.x * occlusion / 8.0;
 }
 
 void main()
@@ -47,6 +82,15 @@ void main()
     }
     vec3 shown = scene.rgb;
     float d = texture2D(s_ff7Depth, uv).x;
+    float effect = u_ff7Haze.w > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
+    if (u_ff7Contact.x > 0.0 && d < 0.9999 && d > 0.0001)
+    {
+        // (the stage and what stands on it: faded out from 2.25 to 4.5 times the camera's distance, so FF7's far
+        // scenery keeps its own look)
+        float here = nearness(uv);
+        float onStage = 1.0 - smoothstep(1.5 * u_ff7Haze.x, 3.0 * u_ff7Haze.x, 1.0 / here);
+        if (onStage > 0.0) shown *= mix(1.0, contactAt(uv, here), onStage * (1.0 - effect));
+    }
     if (u_ff7Haze.y > 0.0 && d < 0.9999 && d > 0.0001)
     {
         // The backdrop: the farthest of 8 places near the top, and what is within 10% of it.
@@ -70,7 +114,6 @@ void main()
         float outdoors = smoothstep(1.6, 2.4, backdrop / max(u_ff7Haze.x, 1.0));
         if (sky.w >= 2.0 && outdoors > 0.0 && z < backdrop)
         {
-            float effect = u_ff7Haze.w > 0.5 ? clamp(scene.a / max(dot(scene.rgb, vec3(0.299, 0.587, 0.114)), 0.02), 0.0, 1.0) : 0.0;   // (alpha: the light effects added)
             float haze = u_ff7Haze.y * outdoors * clamp((z - u_ff7Haze.x) / (backdrop - u_ff7Haze.x), 0.0, 1.0) * (1.0 - effect);
             shown = mix(shown, sky.rgb / sky.w, haze);
         }

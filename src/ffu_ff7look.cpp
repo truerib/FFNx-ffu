@@ -44,18 +44,24 @@
 
 bool ffuLookAtmosphere();   // ffu_look.cpp
 bool ffuLookCinema();
+bool ffuLookLighting();
 bool ffuLookShown();
 float ffuLookLevel(int which);
 float ffuLookSplit();
 
 namespace
 {
-    constexpr float HAZE_MOST = 0.5f, HAZE_START = 1.5f, CINEMA_ASPECT = 2.2f;   // (0.35 was too faint to see: Richard 2026-10-22)
+    constexpr float HAZE_MOST = 0.5f, HAZE_START = 1.5f, CINEMA_ASPECT = 2.2f;
+    // Contact shading with the lighting on (Richard 2026-10-22, "I can't see any other changes": FFNx's own lighting is
+    // already lit 4 to 1, so the look's balance alone hardly showed): its strength (the contact slider scales it) and
+    // its ring's radius across the picture
+    constexpr float CONTACT = 0.7f, CONTACT_RING = 0.012f;   // (0.35 was too faint to see: Richard 2026-10-22)
     constexpr byte SUMMON = 0x03, LIMIT = 0x14, W_SUMMON = 0x16;
 
     int programState = 0;   // 0 not tried, 1 ready, -1 unavailable
     bgfx::ProgramHandle program = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle uniformDepth = BGFX_INVALID_HANDLE, uniformHaze = BGFX_INVALID_HANDLE, uniformSplit = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle uniformContact = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle samplerScene = BGFX_INVALID_HANDLE, samplerDepth = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout quadLayout;
     bgfx::FrameBufferHandle target = BGFX_INVALID_HANDLE;
@@ -181,6 +187,7 @@ bool Renderer::ffuFF7Ready()
     uniformDepth = bgfx::createUniform("u_ff7Depth", bgfx::UniformType::Vec4);
     uniformHaze = bgfx::createUniform("u_ff7Haze", bgfx::UniformType::Vec4);
     uniformSplit = bgfx::createUniform("u_ff7Split", bgfx::UniformType::Vec4);
+    uniformContact = bgfx::createUniform("u_ff7Contact", bgfx::UniformType::Vec4);
     samplerScene = bgfx::createUniform("s_ff7Scene", bgfx::UniformType::Sampler);
     samplerDepth = bgfx::createUniform("s_ff7Depth", bgfx::UniformType::Sampler);
     quadLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float).end();
@@ -212,7 +219,8 @@ void Renderer::ffuFF7Pass()
 {
     const float barsAt = barsWeight();
     const bool haze = ffuLookAtmosphere();
-    if ((!haze && barsAt <= 0.0f) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
+    const float contact = ffuLookLighting() ? std::min(CONTACT * ffuLookLevel(2), 1.0f) : 0.0f;
+    if ((!haze && barsAt <= 0.0f && contact <= 0.0f) || internalState.bIsHDR || enable_antialiasing > 0 || ffuLayerActive || ffuBattleLayerFrame
         || backendViewId > 240 || !ffuFF7Ready())
         return;
     ffuFF7Prepare();
@@ -255,6 +263,8 @@ void Renderer::ffuFF7Pass()
     bgfx::setUniform(uniformHaze, hazeData);
     const float split[4] = { ffuLookSplit(), 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(uniformSplit, split);
+    const float contactData[4] = { contact, CONTACT_RING, 1.0f / float(framebufferWidth), 1.0f / float(std::max<uint16_t>(framebufferHeight, 1)) };
+    bgfx::setUniform(uniformContact, contactData);
     bgfx::setTexture(0, samplerScene, backendFrameBufferRT[0], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::setTexture(1, samplerDepth, backendFrameBufferRT[1], BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_POINT);
     bgfx::TransientVertexBuffer vertices;
