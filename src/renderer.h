@@ -426,6 +426,7 @@ private:
         uint16_t cropX = 0, cropY = 0;      // where its crop was taken in the layer target
         std::vector<uint8_t> colour;
         std::vector<float> depth;
+        bool colourOnly = false;            // the own battle engine's layer: its depth neither read back nor published
     };
     FfuLayerSlot ffuLayerSlots[3];
     uint16_t ffuLayerWidth = 0, ffuLayerHeight = 0;

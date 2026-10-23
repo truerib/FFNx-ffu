@@ -538,6 +538,8 @@ bool Renderer::ffuLayerBegin(bool touch)
     return true;
 }
 
+bool ffuOwnLayerBlending();
+
 void Renderer::ffuLayerEnd()
 {
     if (!ffuLayerActive) return;
@@ -557,11 +559,16 @@ void Renderer::ffuLayerEnd()
     slot->cropY = (uint16_t)std::clamp((int)(centreY - ffuLayerReadHeight * 0.5f), 0, ffuLayerHeight - ffuLayerReadHeight);
     const bgfx::TextureRegion colourFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
     const bgfx::TextureRegion depthFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
+    // The own battle engine lays the layer on by its colour and alpha alone (the hub's game_layer reads no depth): its
+    // depth isn't read back. Each readback is bgfx's own staging memory, which its allocation cache gives up to the
+    // battle's load, so every battle's first read made it again: about a second each under Wine (its first touch:
+    // bridge-common prefault.c), colour and depth one after the other held FF7 2.3 s (docs/battle-engine.md).
+    slot->colourOnly = ffuOwnLayerBlending() && !warming;
     bgfx::blit(backendViewId, {.handle = slot->read[0]}, colourFrom);
-    bgfx::blit(backendViewId, {.handle = slot->read[1]}, depthFrom);
+    if (!slot->colourOnly) bgfx::blit(backendViewId, {.handle = slot->read[1]}, depthFrom);
     bgfx::touch(backendViewId);
     slot->pending = bgfx::read({.handle = slot->read[0]}, slot->colour.data());
-    bgfx::read({.handle = slot->read[1]}, slot->depth.data());
+    if (!slot->colourOnly) bgfx::read({.handle = slot->read[1]}, slot->depth.data());
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
     slot->requestedAt = now.QuadPart;
@@ -641,7 +648,7 @@ void Renderer::publishLayer(FfuLayerSlot &slot)
         ::memcpy(header->anchors, meta.anchors, sizeof(header->anchors));
         header->anchored = meta.anchored;
         ::memcpy(base + sizeof(LayerHeader), slot.colour.data(), pixels * 4);
-        ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
+        if (!slot.colourOnly) ::memcpy(base + sizeof(LayerHeader) + pixels * 4, slot.depth.data(), pixels * 4);
         QueryPerformanceCounter(&done);
         header->stamp = done.QuadPart;
         InterlockedIncrement(&header->seq);   // even: published
