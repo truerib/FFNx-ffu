@@ -22,6 +22,9 @@ vcpkg_from_github(OUT_SOURCE_PATH SOURCE_DIR
     HEAD_REF master
     REF 1f93b90898dcc492587b617b397e2d2285dcd0ec
     SHA512 6d3c6e9fab9ba5186163099b8ff2e587b1c7c7e41f44b4b3e40c1eba48db2709b1a681e331ceec591919d48291cc942a399081ceb576e82e97ff9902af3b13a1
+    PATCHES
+        # Final Fantasy Universe: a read-back texture keeps its staging buffer (no fresh mapping at each battle under Wine)
+        ffu-readback-staging.patch
 )
 
 # Move bx source inside bgfx source tree

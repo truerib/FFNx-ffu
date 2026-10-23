@@ -560,10 +560,11 @@ void Renderer::ffuLayerEnd()
     const bgfx::TextureRegion colourFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 0), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
     const bgfx::TextureRegion depthFrom = {.handle = bgfx::getTexture(ffuLayerFrameBuffer, 1), .x = slot->cropX, .y = slot->cropY, .width = ffuLayerReadWidth, .height = ffuLayerReadHeight};
     // The own battle engine lays the layer on by its colour and alpha alone (the hub's game_layer reads no depth): its
-    // depth isn't read back. Each readback is bgfx's own staging memory, which its allocation cache gives up to the
-    // battle's load, so every battle's first read made it again: about a second each under Wine (its first touch:
-    // bridge-common prefault.c), colour and depth one after the other held FF7 2.3 s (docs/battle-engine.md).
-    slot->colourOnly = ffuOwnLayerBlending() && !warming;
+    // depth isn't read back. Each readback's staging memory was bgfx's cache's, which gave it up to the battle's load,
+    // so every battle's first reads made it again: about a second each under Wine (its first touch: bridge-common
+    // prefault.c), colour and depth held FF7 2.3 s (docs/battle-engine.md); the fork's bgfx now keeps each read-back
+    // texture's (.vcpkg/ports/bgfx/ffu-readback-staging.patch), made and touched at the warm-up.
+    slot->colourOnly = ffuOwnLayerBlending() || warming;   // (the warm-up is the own battle engine's: BattleAsk v4)
     bgfx::blit(backendViewId, {.handle = slot->read[0]}, colourFrom);
     if (!slot->colourOnly) bgfx::blit(backendViewId, {.handle = slot->read[1]}, depthFrom);
     bgfx::touch(backendViewId);
