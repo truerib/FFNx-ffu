@@ -138,6 +138,24 @@ struct ff8_battle_effect_layout_patch
 	ff8_battle_effect_layout_patch_mode mode;
 };
 
+// The layout table below is written in the addresses of the FF8.exe it was made on. The GOG Remastered's FF8.exe (1.2 US)
+// has the same code, but its .text from about 0x500000 up sits lower (0x1B0 lower at every entry of the table), so every
+// entry missed and the whole patch was skipped: Quezacotl's and the other Remastered effects then overran the classic
+// arena (FF8's task pools: "BdLinkTask: FAILED") and every GF summon hung (FFU, 2026-10-24). A code address moves by the
+// shift FFNx's own resolved externals show; data addresses (.data) never move.
+static uint32_t battle_effect_scripts_original = 0xB0BFC0;
+
+static uint32_t ff8_main_text_end()
+{
+	const uint8_t *base = reinterpret_cast<const uint8_t *>(GetModuleHandleA(NULL));
+	const IMAGE_NT_HEADERS *nt = reinterpret_cast<const IMAGE_NT_HEADERS *>(base + reinterpret_cast<const IMAGE_DOS_HEADER *>(base)->e_lfanew);
+	const IMAGE_SECTION_HEADER *section = IMAGE_FIRST_SECTION(nt);
+	for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section)
+		if (section->Characteristics & IMAGE_SCN_CNT_CODE)
+			return uint32_t(base) + section->VirtualAddress + section->Misc.VirtualSize;
+	return 0;
+}
+
 static void patch_ff8_remastered_battle_effect_layout()
 {
 	if (!FF8_US_VERSION)
@@ -174,7 +192,7 @@ static void patch_ff8_remastered_battle_effect_layout()
 			break;
 		}
 
-		return reinterpret_cast<int (*)()>(0xB0BFC0)();
+		return reinterpret_cast<int (*)()>(battle_effect_scripts_original)();
 	};
 
 	static const ff8_battle_effect_layout_patch patches[] = {
@@ -391,46 +409,79 @@ static void patch_ff8_remastered_battle_effect_layout()
 		{ 0x1873E4C, 0x13BA8, 0x200000, ff8_battle_effect_layout_patch_mode::direct },
 	};
 
-	for (const auto &patch : patches)
+	const uint32_t text_end = ff8_main_text_end();
+	int32_t shift = 0;
+	const auto at = [&](uint32_t address) -> uint32_t
 	{
-		const bool valid = patch.mode == ff8_battle_effect_layout_patch_mode::relative_call
-			? *reinterpret_cast<const uint8_t *>(patch.address) == 0xE8
-				&& patch.address + 5 + *reinterpret_cast<const int32_t *>(patch.address + 1) == patch.classic_offset
-			: patch.mode == ff8_battle_effect_layout_patch_mode::effect_arena_push
-				? *reinterpret_cast<const uint8_t *>(patch.address) == 0xA1
-				&& *reinterpret_cast<const uint32_t *>(patch.address + 1) == patch.classic_offset
-				&& *reinterpret_cast<const uint8_t *>(patch.address + 5) == 0x50
-				: *reinterpret_cast<const uint32_t *>(patch.address) == patch.classic_offset;
-
-		if (!valid)
+		return address >= 0x401000 && address < text_end ? uint32_t(int32_t(address) + shift) : address;
+	};
+	// (the first entry whose bytes aren't the table's, or 0 when all are)
+	const auto first_unexpected = [&]() -> uint32_t
+	{
+		for (const auto &patch : patches)
 		{
-			ffnx_warning("FF8 Remastered battle effect layout: unexpected value at 0x%08X, skipping patches.\n", patch.address);
-			return;
+			const uint32_t address = at(patch.address);
+			const bool valid = patch.mode == ff8_battle_effect_layout_patch_mode::relative_call
+				? *reinterpret_cast<const uint8_t *>(address) == 0xE8
+					&& address + 5 + *reinterpret_cast<const int32_t *>(address + 1) == at(patch.classic_offset)
+				: patch.mode == ff8_battle_effect_layout_patch_mode::effect_arena_push
+					? *reinterpret_cast<const uint8_t *>(address) == 0xA1
+					&& *reinterpret_cast<const uint32_t *>(address + 1) == patch.classic_offset
+					&& *reinterpret_cast<const uint8_t *>(address + 5) == 0x50
+					: *reinterpret_cast<const uint32_t *>(address) == patch.classic_offset;
+
+			if (!valid) return patch.address;
+		}
+		return 0;
+	};
+
+	uint32_t unexpected = text_end ? first_unexpected() : patches[0].address;
+	if (unexpected != 0 && text_end != 0 && ff8_externals.sub_6C3760 != 0)
+	{
+		shift = int32_t(ff8_externals.sub_6C3760) - 0x6C3760;
+		if (shift != 0 && first_unexpected() == 0)
+		{
+			ffnx_info("FF8 Remastered battle effect layout: this FF8.exe's code is %d bytes from the table's, patched there\n", shift);
+			unexpected = 0;
+		}
+		else
+		{
+			shift = 0;
 		}
 	}
 
+	if (unexpected != 0)
+	{
+		ffnx_warning("FF8 Remastered battle effect layout: unexpected value at 0x%08X, skipping patches.\n", unexpected);
+		return;
+	}
+
+	battle_effect_scripts_original = at(0xB0BFC0);
 	const uint32_t effect_arena = uint32_t(extended_memory) + 0x200000;
 
 	for (const auto &patch : patches)
 	{
+		const uint32_t address = at(patch.address);
 		const uint32_t value = patch.mode == ff8_battle_effect_layout_patch_mode::effect_arena
 			|| patch.mode == ff8_battle_effect_layout_patch_mode::effect_arena_push
 			? effect_arena + patch.remastered_offset
-			: patch.remastered_offset;
+			: patch.mode == ff8_battle_effect_layout_patch_mode::relative_call
+				? at(patch.remastered_offset)   // (FF8's own code moves with the shift; FFNx's own functions don't)
+				: patch.remastered_offset;
 
 		if (patch.mode == ff8_battle_effect_layout_patch_mode::relative_call)
 		{
-			replace_call(patch.address, reinterpret_cast<void *>(value));
+			replace_call(address, reinterpret_cast<void *>(value));
 		}
 		else if (patch.mode == ff8_battle_effect_layout_patch_mode::effect_arena_push)
 		{
-			patch_code_byte(patch.address, 0x68);
-			patch_code_dword(patch.address + 1, value);
-			patch_code_byte(patch.address + 5, 0x90);
+			patch_code_byte(address, 0x68);
+			patch_code_dword(address + 1, value);
+			patch_code_byte(address + 5, 0x90);
 		}
 		else
 		{
-			patch_code_dword(patch.address, value);
+			patch_code_dword(address, value);
 		}
 	}
 }
