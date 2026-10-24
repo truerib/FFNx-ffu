@@ -2186,7 +2186,13 @@ uint32_t Renderer::createBlitTexture(uint32_t x, uint32_t y, uint32_t width, uin
 
 void Renderer::blitTexture(uint16_t dest, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
-    uint16_t newX = getInternalCoordX(x);
+    // FF8 gives x in its own game space, whose left edge in widescreen is wide_viewport_x (a whole-screen copy starts at -64):
+    // shifted onto the framebuffer as the scissor does, in signed numbers, never read past it (the uint16 maths wrapped -64
+    // to 65152 and Vulkan faulted: Eden crashed FF8; FFU, 2026-10-24)
+    int32_t gameX = int32_t(x);
+    if (ff8 && widescreen_enabled) gameX += abs(wide_viewport_x);
+    uint16_t dstX = gameX < 0 ? getInternalCoordX(uint16_t(std::min<int32_t>(-gameX, 0xFFFF))) : 0;
+    uint16_t newX = getInternalCoordX(uint16_t(gameX < 0 ? 0 : gameX > 0xFFFF ? 0xFFFF : gameX));
     uint16_t newY = getInternalCoordY(y);
     uint16_t newWidth = getInternalCoordX(width);
     uint16_t newHeight = getInternalCoordY(height);
@@ -2217,7 +2223,12 @@ void Renderer::blitTexture(uint16_t dest, uint32_t x, uint32_t y, uint32_t width
     backendViewId++;
 
     bgfx::TextureHandle texHandle = { dest };
-    bgfx::blit(backendViewId, {.handle = texHandle, .x = 0, .y = dstY}, {.handle = bgfx::getTexture(backendFrameBuffer, 0), .x = newX, .y = newY, .width = newWidth, .height = newHeight} );
+    if (newX < framebufferWidth && newY < framebufferHeight && dstX < newWidth && dstY < newHeight)
+    {
+        const auto copyWidth = static_cast<uint16_t>(std::min<uint32_t>(newWidth - dstX, framebufferWidth - newX));
+        const auto copyHeight = static_cast<uint16_t>(std::min<uint32_t>(newHeight - dstY, framebufferHeight - newY));
+        bgfx::blit(backendViewId, {.handle = texHandle, .x = dstX, .y = dstY}, {.handle = bgfx::getTexture(backendFrameBuffer, 0), .x = newX, .y = newY, .width = copyWidth, .height = copyHeight} );
+    }
     bgfx::touch(backendViewId);
     setClearFlags(false, false);
 
