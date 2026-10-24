@@ -2187,10 +2187,11 @@ uint32_t Renderer::createBlitTexture(uint32_t x, uint32_t y, uint32_t width, uin
 void Renderer::blitTexture(uint16_t dest, uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
     // FF8 gives x in its own game space, whose left edge in widescreen is wide_viewport_x (a whole-screen copy starts at -64):
-    // shifted onto the framebuffer as the scissor does, in signed numbers, never read past it (the uint16 maths wrapped -64
-    // to 65152 and Vulkan faulted: Eden crashed FF8; FFU, 2026-10-24)
+    // shifted onto the framebuffer as the scissor does (x 0 at the game's full width keeps the whole screen, as there), in
+    // signed numbers, never read past it (the uint16 maths wrapped -64 to 65152 and Vulkan faulted: Eden crashed FF8; FFU,
+    // 2026-10-24)
     int32_t gameX = int32_t(x);
-    if (ff8 && widescreen_enabled) gameX += abs(wide_viewport_x);
+    if (ff8 && widescreen_enabled && !(x == 0 && width == game_width)) gameX += abs(wide_viewport_x);
     uint16_t dstX = gameX < 0 ? getInternalCoordX(uint16_t(std::min<int32_t>(-gameX, 0xFFFF))) : 0;
     uint16_t newX = getInternalCoordX(uint16_t(gameX < 0 ? 0 : gameX > 0xFFFF ? 0xFFFF : gameX));
     uint16_t newY = getInternalCoordY(y);

@@ -441,7 +441,7 @@ static void patch_ff8_remastered_battle_effect_layout()
 	if (unexpected != 0 && text_end != 0 && ff8_externals.sub_6C3760 != 0)
 	{
 		shift = int32_t(ff8_externals.sub_6C3760) - 0x6C3760;
-		const bool sane = shift != 0 && shift % 4 == 0 && shift >= -0x10000 && shift <= 0x10000;   // (a misread pointer: never)
+		const bool sane = shift != 0 && shift > -0x400000 && shift < 0x400000;   // (a misread pointer: never; each read bounded below)
 		if (sane && first_unexpected() == 0)
 		{
 			ffnx_info("FF8 Remastered battle effect layout: this FF8.exe's code is %d bytes from the table's, patched there\n", shift);
