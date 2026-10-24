@@ -421,6 +421,8 @@ static void patch_ff8_remastered_battle_effect_layout()
 		for (const auto &patch : patches)
 		{
 			const uint32_t address = at(patch.address);
+			const bool code = patch.address >= 0x401000 && patch.address < text_end;
+			if (code && (address < 0x401000 || address + 6 > text_end)) return patch.address;   // (never read outside the code)
 			const bool valid = patch.mode == ff8_battle_effect_layout_patch_mode::relative_call
 				? *reinterpret_cast<const uint8_t *>(address) == 0xE8
 					&& address + 5 + *reinterpret_cast<const int32_t *>(address + 1) == at(patch.classic_offset)
@@ -439,7 +441,8 @@ static void patch_ff8_remastered_battle_effect_layout()
 	if (unexpected != 0 && text_end != 0 && ff8_externals.sub_6C3760 != 0)
 	{
 		shift = int32_t(ff8_externals.sub_6C3760) - 0x6C3760;
-		if (shift != 0 && first_unexpected() == 0)
+		const bool sane = shift != 0 && shift % 4 == 0 && shift >= -0x10000 && shift <= 0x10000;   // (a misread pointer: never)
+		if (sane && first_unexpected() == 0)
 		{
 			ffnx_info("FF8 Remastered battle effect layout: this FF8.exe's code is %d bytes from the table's, patched there\n", shift);
 			unexpected = 0;
