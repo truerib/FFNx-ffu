@@ -354,6 +354,7 @@ struct driver_stats
 
 time_t qpc_get_time(time_t *dest);
 time_t qpc_diff_time(time_t* t1, time_t* t2, time_t* out);
+void ffu_limiter_wait(time_t *now, const time_t *last, double frameTime);
 uint32_t get_version();
 struct game_mode *getmode();
 struct game_mode *getmode_cached();

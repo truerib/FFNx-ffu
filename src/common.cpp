@@ -28,6 +28,7 @@
 #include <sys/timeb.h>
 #include <hwinfo/hwinfo.h>
 #include <regex>
+#include <algorithm>
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <psapi.h>
@@ -2804,6 +2805,92 @@ time_t qpc_diff_time(time_t* t1, time_t* t2, time_t* out)
 	if (out != nullptr) *out = ret;
 
 	return ret;
+}
+
+// Final Fantasy Universe: the frame limiters (ff7_limit_fps, ff8_limit_fps) used to spin on the counter until the
+// frame's time was up, which kept a whole core busy for a game running hidden behind the hub. This sleeps through
+// the wait on a waitable timer and spins only the last stretch (measured under this Wine, spikes/sleep-probe: a
+// timer wait overshoots by under 1.1 ms up to 16 ms, so a margin of 1.5 ms always lands before the time and the
+// pacing is the old one: the same target, the frame ends at the first counter reading at or past it).
+// FFU_LIMITER_SPIN=1 brings the old busy wait back, for comparing the two.
+void ffu_limiter_wait(time_t *now, const time_t *last, double frameTime)
+{
+	static HANDLE timer = nullptr;
+	static double countsPerMicrosecond = 0.0;
+	static bool spinOnly = false;
+	static bool initialised = false;
+
+	if (!initialised)
+	{
+		initialised = true;
+
+		LARGE_INTEGER frequency;
+		if (QueryPerformanceFrequency(&frequency) && frequency.QuadPart > 0)
+			countsPerMicrosecond = double(frequency.QuadPart) / 1000000.0;
+
+		char spinOverride[8];
+		if (GetEnvironmentVariableA("FFU_LIMITER_SPIN", spinOverride, sizeof(spinOverride)) > 0 && spinOverride[0] == '1')
+			spinOnly = true;
+
+		if (!spinOnly && countsPerMicrosecond > 0.0)
+		{
+			timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+			if (timer == nullptr) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);
+			if (timer == nullptr) timeBeginPeriod(1); // the Sleep(1) fallback below needs it on a real Windows
+		}
+
+		ffnx_info("Frame limiter: %s\n", spinOnly ? "busy wait (FFU_LIMITER_SPIN)" : timer != nullptr ? "sleeping on a waitable timer" : "Sleep(1)");
+	}
+
+	// The margin starts at 1.5 ms and widens when a sleep ends later than that leaves room for (a loaded Mac, timer
+	// coalescing), so a wait never runs past the frame's time for long; it eases back by a small step per sleep.
+	static double marginMicroseconds = 1500.0;
+	static int widenings = 0;
+	const double chunkCounts = 8000.0 * countsPerMicrosecond;
+
+	for (;;)
+	{
+		qpc_get_time(now);
+		if (!(*now > *last)) return;
+
+		const double remaining = frameTime - double(*now - *last);
+		if (remaining <= 0.0) return;
+
+		const double spinCounts = marginMicroseconds * countsPerMicrosecond;
+		if (spinOnly || countsPerMicrosecond <= 0.0 || remaining <= spinCounts)
+		{
+			YieldProcessor();
+			continue;
+		}
+
+		const double sleepCounts = std::min(remaining - spinCounts, chunkCounts);
+		const time_t wakeAt = *now + static_cast<time_t>(sleepCounts);
+		bool slept = false;
+		if (timer != nullptr)
+		{
+			LARGE_INTEGER due;
+			due.QuadPart = -static_cast<LONGLONG>(sleepCounts / countsPerMicrosecond * 10.0); // 100 ns, relative
+			if (SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE))
+				slept = WaitForSingleObject(timer, 20) == WAIT_OBJECT_0;
+		}
+		else if (remaining > spinCounts + 1500.0 * countsPerMicrosecond)
+		{
+			Sleep(1); // only without any timer: whatever it overshoots, the next pass reads the counter again
+			continue;
+		}
+		if (!slept) continue;
+
+		time_t woke;
+		qpc_get_time(&woke);
+		const double overshoot = double(woke - wakeAt) / countsPerMicrosecond;
+		if (overshoot + 250.0 > marginMicroseconds)
+		{
+			marginMicroseconds = std::min(8000.0, overshoot * 1.5 + 500.0);
+			if (widenings++ < 5) ffnx_info("Frame limiter: a sleep ended %.0f us late, the spin margin is now %.0f us\n", overshoot, marginMicroseconds);
+		}
+		else if (marginMicroseconds > 1500.0)
+			marginMicroseconds = std::max(1500.0, marginMicroseconds - 5.0);
+	}
 }
 
 // version check reads from a given offset in memory
