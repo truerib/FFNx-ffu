@@ -855,8 +855,7 @@ void ff7_limit_fps()
 	framerate *= gamehacks.getCurrentSpeedhack();
 	double frame_time = game_object->countspersecond / framerate;
 
-	do qpc_get_time(&gametime);
-	while (gametime > last_gametime && qpc_diff_time(&gametime, &last_gametime, nullptr) < frame_time);
+	ffu_limiter_wait(&gametime, &last_gametime, frame_time);
 
 	last_gametime = gametime;
 }
