@@ -564,7 +564,13 @@ void Renderer::ffuLayerEnd()
     // so every battle's first reads made it again: about a second each under Wine (its first touch: bridge-common
     // prefault.c), colour and depth held FF7 2.3 s (docs/battle-engine.md); the fork's bgfx now keeps each read-back
     // texture's (.vcpkg/ports/bgfx/ffu-readback-staging.patch), made and touched at the warm-up.
-    slot->colourOnly = ffuOwnLayerBlending() || warming;   // (the warm-up is the own battle engine's: BattleAsk v4)
+    // A visitor's hidden battle reads its depth too (an FF7 or FF8 host lays a guest's layer in by it): its bridge asks
+    // warm >= 2 so the warm-up reads depth as well, and the depth staging is made and touched outside a battle, not
+    // at the hidden battle's first frames (three or four 1.2 s first-touch stalls each, 2026-10-28). An older bridge
+    // (warm 1) keeps the colour-only warm-up.
+    const BattleAsk *warmAsk = battleAsk();
+    const bool warmDepth = warming && warmAsk && warmAsk->version >= 4 && warmAsk->warm >= 2;
+    slot->colourOnly = ffuOwnLayerBlending() || (warming && !warmDepth);   // (the warm-up: BattleAsk v4; with depth at warm >= 2)
     bgfx::blit(backendViewId, {.handle = slot->read[0]}, colourFrom);
     if (!slot->colourOnly) bgfx::blit(backendViewId, {.handle = slot->read[1]}, depthFrom);
     bgfx::touch(backendViewId);
