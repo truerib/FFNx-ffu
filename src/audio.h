@@ -192,6 +192,10 @@ private:
 	// and its restore) compose with the hub's mute instead of undoing it (ffu_audio.cpp)
 	float _ffuMusicGain = 1.0f;
 	bool _ffuSilenced = false;
+	float _ffuLevel = 1.0f;          // the whole engine's level now (0 silent, 1 full): a silence lifted with a ramp rises to 1 over its seconds, a frame at a time (ffu_audio.cpp)
+	float _ffuTarget = 1.0f;
+	float _ffuRisePerSecond = 0.0f; // 0: the level jumps to its target
+	unsigned long long _ffuLevelAt = 0;
 	std::vector<std::pair<SoLoud::VGMStream*, SoLoud::handle>> _ffuPlaying;   // files played for a visitor (ffu_audio_play_file)
 	SoLoud::time _lastVolumeFadeEndTime = 0.0;
 
