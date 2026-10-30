@@ -60,6 +60,7 @@ namespace
     std::atomic<uint32_t> requestedFadeMs{0};
     std::atomic<uint32_t> requestSequence{0};
     std::atomic<int> requestedSilence{-1};       // -1 nothing new, 0 its sound back, 1 silent
+    std::atomic<uint32_t> requestedRampMs{0};    // with a request to bring the sound back: over how long (0: at once)
     uint32_t appliedSequence = 0;
     DWORD lastRestart = 0;
 
@@ -188,12 +189,21 @@ extern "C" __declspec(dllexport) void ffu_audio_silence(int on)
     requestedSilence.store(on ? 1 : 0, std::memory_order_release);
 }
 
+// 1: silent; 0: back, rising over `seconds` (0: at once): the hub lets the games' own sound in as its menu music fades out (the camera has reached the player). Any thread.
+extern "C" __declspec(dllexport) void ffu_audio_silence_ramp(int on, float seconds)
+{
+    requestedRampMs.store(on ? 0u : (uint32_t)(std::clamp(seconds, 0.0f, 30.0f) * 1000.0f + 0.5f), std::memory_order_relaxed);
+    requestedSilence.store(on ? 1 : 0, std::memory_order_release);
+}
+
 // As the engine starts: silent from the very first sound when the hub launched this game behind its start screen.
 void NxAudioEngine::ffuStartSilence()
 {
     char value[4] = "";
     if (GetEnvironmentVariableA("FFU_SILENT", value, sizeof value) && value[0] == '1') {
         _ffuSilenced = true;
+        _ffuLevel = 0.0f;
+        _ffuTarget = 0.0f;
         _engine.setGlobalVolume(0.0f);
         ffnx_info("FFU audio: silent from the start (FFU_SILENT=1)\n");
     }
@@ -211,11 +221,29 @@ void NxAudioEngine::ffuFrame()
     if (!_engineInitialized) return;
 
     int silence = requestedSilence.exchange(-1, std::memory_order_acquire);
+    uint32_t rampMs = requestedRampMs.exchange(0, std::memory_order_relaxed);
     if (silence >= 0 && (silence == 1) != _ffuSilenced) {
         _ffuSilenced = silence == 1;
-        _engine.setGlobalVolume(_ffuSilenced ? 0.0f : 1.0f);
-        ffnx_info("FFU audio: %s\n", _ffuSilenced ? "silent (the hub's start screen)" : "its sound back");
+        _ffuTarget = _ffuSilenced ? 0.0f : 1.0f;
+        if (_ffuSilenced || rampMs == 0) {
+            _ffuLevel = _ffuTarget;
+            _ffuRisePerSecond = 0.0f;
+            _engine.setGlobalVolume(_ffuLevel);
+        } else {
+            _ffuRisePerSecond = 1000.0f / (float)rampMs;   // (rising from where it stands: a start under way carries on)
+        }
+        ffnx_info("FFU audio: %s\n", _ffuSilenced ? "silent (the hub's start screen)" : (rampMs == 0 ? "its sound back" : "its sound coming back over a ramp"));
+        if (!_ffuSilenced && rampMs != 0) ffnx_info("FFU audio: ramp %u ms\n", rampMs);
     }
+    // the ramp: a frame at a time, on the game thread, as a curve (level squared) so the rise is gentle at the bottom where the ear is most sensitive
+    unsigned long long audioNow = GetTickCount64();
+    if (_ffuLevel != _ffuTarget && _ffuRisePerSecond > 0.0f) {
+        float seconds = _ffuLevelAt != 0 ? (float)(audioNow - _ffuLevelAt) / 1000.0f : 0.0f;
+        _ffuLevel = std::min(_ffuLevel + _ffuRisePerSecond * std::min(seconds, 0.25f), _ffuTarget);
+        _engine.setGlobalVolume(_ffuLevel * _ffuLevel);
+        if (_ffuLevel >= _ffuTarget) ffnx_info("FFU audio: its sound is back in full\n");
+    }
+    _ffuLevelAt = audioNow;
 
     ffuPlayFiles();
 
